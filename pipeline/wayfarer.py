@@ -24,10 +24,23 @@ VIDEO_EXT = {'.mp4', '.mov', '.m4v', '.mkv', '.avi', '.webm'}
 IMAGE_EXT = {'.jpg', '.jpeg', '.png'}
 
 
+HINTS = {
+    'ffmpeg': 'Is ffmpeg installed and on PATH? Is the video file readable?',
+    'ns-process-data': 'COLMAP could not reconstruct camera poses. Check that colmap is on PATH; if it is, the capture '
+                       'likely has too much blur or blank walls. Re-shoot slower with more overlap (docs/SOP.md).',
+    'ns-train': 'Training failed. Out of GPU memory? Retry with --max-side 1280 or --quality fast.',
+    'ns-export': 'Export failed. Re-run with --force export.',
+}
+
+
 def run(cmd):
     print('  $', ' '.join(map(str, cmd)), flush=True)
     t = time.time()
-    subprocess.run([str(c) for c in cmd], check=True)
+    try:
+        subprocess.run([str(c) for c in cmd], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        tool = Path(str(cmd[0])).stem
+        sys.exit(f'\nFAILED: {tool} ({e.__class__.__name__}). {HINTS.get(tool, "")}')
     print(f'  ({time.time() - t:.0f}s)')
 
 
