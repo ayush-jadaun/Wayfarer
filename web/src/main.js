@@ -49,16 +49,19 @@ async function boot() {
 
   if (data.splat) {
     $('status').textContent = 'Loading 3D capture…';
-    const { DropInViewer } = await import('@mkkellogg/gaussian-splats-3d');
-    const iso = self.crossOriginIsolated; // shared memory needs COOP/COEP headers
-    const gpuSort = iso && new URLSearchParams(location.search).get('sort') !== 'cpu'; // ?sort=cpu for software GL
-    splat = new DropInViewer({ gpuAcceleratedSort: gpuSort, sharedMemoryForWorkers: iso });
-    await splat.addSplatScene(new URL(data.splat.url, location.origin + sceneDir).href, {
-      position: data.splat.position, rotation: data.splat.rotation, scale: data.splat.scale,
-      splatAlphaRemovalThreshold: 5, showLoadingUI: false, progressiveLoad: false,
-      onProgress: (pct) => { $('status').textContent = `Loading 3D capture… ${Math.round(pct)}%`; },
+    const { SparkRenderer, SplatMesh } = await import('@sparkjsdev/spark');
+    // sqrt(5) std-devs instead of sqrt(8): visually identical indoors, noticeably cheaper fill rate on laptops
+    scene.add(new SparkRenderer({ renderer, maxStdDev: Math.sqrt(5) }));
+    splat = new SplatMesh({
+      url: new URL(data.splat.url, location.origin + sceneDir).href,
+      lod: true, // builds a level-of-detail tree in a worker: fixed splat budget per frame on any GPU
+      onProgress: (e) => { if (e.total) $('status').textContent = `Loading 3D capture… ${Math.round((e.loaded / e.total) * 100)}%`; },
     });
+    splat.position.fromArray(data.splat.position);
+    splat.quaternion.fromArray(data.splat.rotation);
+    splat.scale.fromArray(data.splat.scale);
     scene.add(splat);
+    await splat.initialized;
     setBlueprint(false); // splat is the visual; the grid stays for collision + nav
   }
 
