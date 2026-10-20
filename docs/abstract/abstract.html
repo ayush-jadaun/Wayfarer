@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wayfarer: Technical Abstract</title>
+<style>
+  @page { size: A4; margin: 16mm 16mm 16mm 16mm; }
+  :root { --ink: #14202e; --muted: #5b6b7c; --accent: #e8702a; --cyan: #1d8fb3; --line: #d9dee4; }
+  * { box-sizing: border-box; }
+  body { font: 10pt/1.45 "Segoe UI", system-ui, sans-serif; color: var(--ink); margin: 0; }
+  h1 { font-size: 22pt; margin: 0; letter-spacing: 0.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 2px 0 10px; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; font-size: 9pt; color: var(--muted); border-top: 2px solid var(--accent); padding-top: 6px; margin-bottom: 12px; }
+  h2 { font-size: 12.5pt; margin: 14px 0 4px; color: var(--ink); border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+  h2 b { color: var(--accent); margin-right: 6px; }
+  h3 { font-size: 10.5pt; margin: 9px 0 2px; }
+  p { margin: 4px 0; }
+  ul { margin: 3px 0 3px 18px; padding: 0; }
+  li { margin: 1px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 5px 0; }
+  th, td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; vertical-align: top; }
+  th { background: #f2f4f6; }
+  code { font-family: Consolas, ui-monospace, monospace; font-size: 8.8pt; background: #f2f4f6; padding: 0 3px; border-radius: 3px; }
+  .eq { font-family: Cambria, Georgia, serif; font-style: italic; text-align: center; margin: 5px 0; }
+  .fig { margin: 6px 0; text-align: center; }
+  .fig figcaption { font-size: 8.5pt; color: var(--muted); }
+  .todo { background: #fff2c2; padding: 0 3px; border-radius: 3px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .page-break { break-before: page; }
+</style>
+</head>
+<body>
+
+<h1><span>Wayfarer</span>: smartphone video to a navigable indoor digital twin</h1>
+<p class="sub">Technical abstract, Namma Space, Techfest 2026-27, IIT Bombay, Round 1 (3D Reconstruction &amp; Roaming)</p>
+<div class="meta">
+  <span><b>Team ID:</b> <span class="todo">TF-XXXX</span></span>
+  <span><b>Repository:</b> github.com/ayush-jadaun/Wayfarer</span>
+  <span><b>Live viewer:</b> <span class="todo">https://wayfarer-….vercel.app</span></span>
+</div>
+
+<h2><b>1</b>Overview</h2>
+<p>Wayfarer turns an ordinary smartphone walkthrough of an indoor space into a <b>photorealistic, metric, walkable 3D twin</b> that runs in any desktop browser with nothing to install. One command takes a video through blur-aware frame selection, Structure-from-Motion, 3D Gaussian Splatting and our own <b>navigation-grid builder</b>. The builder levels the model, recovers real-world scale and extracts a walkable occupancy map. The web viewer renders the splat in real time and lets users roam in first person with true wall collision.</p>
+<p>The same metric grid that stops you walking through walls is the substrate for Round 2 (POIs, search, obstacle-aware routing) and for AR navigation in the finale. Those features are already in the viewer.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 760 150" width="100%" font-family="Segoe UI, sans-serif" font-size="11">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#e8702a"/></marker></defs>
+  <g stroke="#14202e" stroke-width="1.2" fill="#f7f9fb">
+    <rect x="5" y="30" width="105" height="70" rx="8"/><rect x="135" y="30" width="105" height="70" rx="8"/>
+    <rect x="265" y="30" width="105" height="70" rx="8"/><rect x="395" y="30" width="105" height="70" rx="8"/>
+    <rect x="525" y="30" width="105" height="70" rx="8" fill="#fff1e6" stroke="#e8702a"/><rect x="655" y="30" width="100" height="70" rx="8" fill="#e8f5fa" stroke="#1d8fb3"/>
+  </g>
+  <g text-anchor="middle" font-weight="600">
+    <text x="57" y="52">Capture (SOP)</text><text x="187" y="52">Frame picker</text><text x="317" y="52">COLMAP SfM</text>
+    <text x="447" y="52">3D Gaussian</text><text x="577" y="52">Navgrid builder</text><text x="705" y="52">Web twin</text>
+  </g>
+  <g text-anchor="middle" fill="#5b6b7c" font-size="9.5">
+    <text x="57" y="68">phone video,</text><text x="57" y="81">1x lens, AE/AF lock</text>
+    <text x="187" y="68">ffmpeg 4 fps,</text><text x="187" y="81">Laplacian blur reject</text>
+    <text x="317" y="68">camera poses +</text><text x="317" y="81">sparse cloud</text>
+    <text x="447" y="64">Splatting</text><text x="447" y="77">splatfacto / gsplat</text><text x="447" y="90">GPU, ~25 min</text>
+    <text x="577" y="64">level, metric scale,</text><text x="577" y="77">walls, walkable grid,</text><text x="577" y="90">.splat compression</text>
+    <text x="705" y="64">three.js + splats,</text><text x="705" y="77">WASD + collision,</text><text x="705" y="90">POIs, A* routes</text>
+  </g>
+  <g stroke="#e8702a" stroke-width="2" marker-end="url(#a)">
+    <path d="M110 65H133"/><path d="M240 65H263"/><path d="M370 65H393"/><path d="M500 65H523"/><path d="M630 65H653"/>
+  </g>
+  <text x="380" y="130" text-anchor="middle" fill="#5b6b7c" font-size="10">python pipeline/wayfarer.py walk.mp4 --name home --ceiling 2.75 &#8594; web/public/scenes/home/{scene.splat, scene.json}</text>
+</svg>
+<figcaption>Figure 1. End-to-end architecture. Highlighted stages are our own work; the rest wraps established open-source tools.</figcaption>
+</figure>
+
+<h2><b>2</b>Capture SOP</h2>
+<p>Reconstruction quality is decided at capture time, so the SOP (<code>docs/SOP.md</code>) states each rule together with the failure mode it prevents:</p>
+<table>
+  <tr><th>Rule</th><th>Failure it prevents</th></tr>
+  <tr><td>1x main lens, landscape, exposure and focus locked, HDR off</td><td>Distortion; brightness pumping that breaks photometric consistency</td></tr>
+  <tr><td>Perimeter loop facing inward at chest height (~1.4 m), ≤ 0.5 m/s, ≤ 30°/s turns</td><td>Motion blur; too little parallax for SfM</td></tr>
+  <tr><td>Stop 2 s at every corner and sweep 90°</td><td>Unregistered corners; holes where walls meet</td></tr>
+  <tr><td>Camera tilted 10–15° down; one ceiling sweep per room</td><td>No floor/ceiling evidence, which leveling and metric scale depend on</td></tr>
+  <tr><td>Walk through doorways with ~3 s of overlap; end at the start point</td><td>Rooms that fail to stitch; drift (fixed by loop closure)</td></tr>
+  <tr><td>Fans off, mirrors and screens covered, doors open</td><td>Floaters and "phantom rooms" behind reflective surfaces</td></tr>
+  <tr><td>Tape-measure one floor-to-ceiling height</td><td>Scale ambiguity (monocular SfM is only defined up to scale)</td></tr>
+</table>
+<p>Two modes are supported: <b>one long video</b> (sequential COLMAP matching) or <b>room-by-room clips</b> that start and end in doorways (exhaustive matching registers them into one model with no manual alignment).</p>
+
+<h2><b>3</b>Reconstruction pipeline</h2>
+<h3>3.1 Blur-aware frame selection</h3>
+<p>Video is sampled at 4 fps and downscaled to 1600 px. For each window of <i>k</i> consecutive frames we keep the one with the highest variance of the Laplacian (a standard focus measure) on a 480 px greyscale thumbnail. Whole windows scoring below 0.35× the clip median are discarded as fast pans. This keeps frames evenly spread in time while rejecting motion blur. The 400-frame cap bounds COLMAP and training time.</p>
+<h3>3.2 Structure-from-Motion</h3>
+<p>COLMAP (via nerfstudio's <code>ns-process-data</code>) extracts SIFT features, matches them (sequential for video, exhaustive for multi-clip), and runs incremental mapping with bundle adjustment, producing camera intrinsics, poses and a sparse point cloud.</p>
+<h3>3.3 3D Gaussian Splatting</h3>
+<p>We train nerfstudio's <code>splatfacto</code> (gsplat CUDA rasteriser) for 30k iterations on an RTX 4070 Laptop GPU. Gaussians are initialised from the SfM points, and densification and pruning adapt detail to scene content. Splats were chosen over meshes or NeRFs because they render photorealistic, view-dependent appearance in real time in WebGL, and they hold up on thin structures (chair legs, plants) and reflective surfaces where photogrammetry meshes tend to melt.</p>
+
+<h2><b>4</b>Navigation-grid builder (our contribution)</h2>
+<p>A splat is just a cloud of coloured ellipsoids in an arbitrary SfM frame: it has no floor, no scale and no idea what is solid. <code>navgrid.py</code> turns it into a level, metric, walkable map:</p>
+<ol style="margin:3px 0 3px 18px;padding:0">
+  <li><b>Floater filtering</b>: drop splats with opacity σ(α) &lt; 0.3 or in the top 2 % by size.</li>
+  <li><b>Floor plane</b>: RANSAC (500 hypotheses, tolerance 0.4 % of scene extent) over the lowest 35 % of points, restricted to normals within 25° of the rough up axis, then least-squares refinement (smallest-eigenvalue axis of the inlier covariance). The scene is rotated so the floor normal becomes +Y with the floor at y = 0.</li>
+  <li><b>Metric scale</b>: a second RANSAC finds the ceiling plane (normal within 8° of the floor's). With a tape-measured height <i>H</i>:
+    <div class="eq">s = H / d<sub>floor→ceiling</sub> &nbsp;&nbsp;and, independently,&nbsp;&nbsp; s′ = h<sub>cam</sub> / median(camera height above floor)</div>
+    Both estimates are printed; agreement within a few percent is an automatic sanity check of the reconstruction.</li>
+  <li><b>Manhattan alignment</b>: we search yaw θ ∈ [0°, 90°) to maximise Σ p<sub>i</sub><sup>2</sup> of the x and z histograms of wall points. Walls collapse into sharp peaks and land on grid axes, which gives crisp corridors and a readable minimap.</li>
+  <li><b>Occupancy</b>: splats between 0.12 m and 1.9 m above the floor (capped below the ceiling), weighted by opacity and binned into 10 cm cells, mark obstacles. Cells with evidence above 1.2 m are walls (<code>#</code>); lower ones are furniture (<code>o</code>). The threshold adapts to scene density (2.5 % of the 90th-percentile cell mass).</li>
+  <li><b>Walkability</b>: floor evidence (|y| &lt; 6 cm) is closed morphologically to fill textureless gaps. Cells the <b>camera physically walked through</b> are forced walkable, and only floor connected to that path is kept. This removes "outdoor" regions seen through windows and mirrors.</li>
+  <li><b>Web export</b>: the PLY is repacked into the 32-byte <code>.splat</code> layout (position, scale, RGBA, quantised rotation), pruned of near-transparent splats and sorted big-and-opaque first. It is about 8× smaller than the 248-byte PLY record, so it loads faster. The alignment is stored as a TRS transform in <code>scene.json</code>, so the splat itself is never resampled.</li>
+</ol>
+<p>The grid is stored as plain text rows, so it is easy to inspect and diff, and a wall the scan missed can be fixed in a text editor.</p>
+
+<h2><b>5</b>Web viewer</h2>
+<div class="two">
+<div>
+<ul>
+  <li><b>Zero install</b>: static Vite build on Vercel; three.js r186 with GaussianSplats3D for splat rendering.</li>
+  <li><b>Performance</b>: COOP/COEP headers enable cross-origin isolation, so the splat depth sort runs in a worker on shared memory with GPU-accelerated distance computation. Pixel ratio is capped at 2, and POI labels are DOM overlays, so they cost no extra WebGL draw calls.</li>
+  <li><b>First-person controls</b>: pointer-lock mouse look, WASD with exponential acceleration and damping (feels like a game, not a CAD tool), run, subtle head bob, and a fly mode for a dollhouse overview.</li>
+</ul>
+</div>
+<div>
+<ul>
+  <li><b>Collision</b>: the walker is a 22 cm circle tested against the occupancy grid. Movement is resolved per axis, so you slide along walls instead of sticking to them.</li>
+  <li><b>Minimap</b>: the grid is baked once into an offscreen canvas; the player arrow, POIs and route are drawn per frame.</li>
+  <li><b>Fallback</b>: without a splat, the viewer extrudes the grid into a blueprint, so a scene can be checked before training ends.</li>
+</ul>
+</div>
+</div>
+
+<h2><b>6</b>Ready for Round 2: POIs, search and navigation</h2>
+<ul>
+  <li><b>POI tagging</b>: press <code>T</code> to march the view ray across the grid to the first floor or obstacle hit and tag a room or item there. POIs persist locally and export as JSON into <code>scene.json</code>. Labels reveal their name on hover/click, or when you look straight at them.</li>
+  <li><b>Search</b>: ranked fuzzy matching (exact, prefix, word-prefix, substring, description, then subsequence), with distances shown for each result.</li>
+  <li><b>Routing</b>: 8-connected A* (octile heuristic, no diagonal corner-cutting) on the grid with obstacles inflated by a 30 cm body margin. If a tight doorway closes the inflated grid, it falls back to the raw grid. Line-of-sight smoothing leaves only real corners. The route is drawn as animated floor chevrons, re-planned every 250 ms as you walk, with turn-by-turn hints and an ETA.</li>
+</ul>
+
+<h2><b>7</b>Validation</h2>
+<table>
+  <tr><th>Test</th><th>Result</th></tr>
+  <tr><td>Synthetic splat flat (6×4 m, 2.6 m ceiling, partition with door, table), moved into a frame with 15° yaw, 2° tilt and 3× scale</td><td>Scale recovered as 3.001 (0.04 % error); ceiling and camera estimates agree (3.0012 vs 3.0015); walls axis-aligned; door walkable; table footprint 1.19 m² (true 1.0 m² plus one cell of margin)</td></tr>
+  <tr><td>Frame selection on video with a 2 s blurred segment</td><td>All blurred frames rejected; every sharp window kept</td></tr>
+  <tr><td>Pathfinding unit tests (<code>npm test</code>)</td><td>6/6: door traversal, no corner cutting, unreachable goals, inflation fallback, collision, instructions</td></tr>
+  <tr><td>Real capture: own home <span class="todo">[after capture]</span></td><td><span class="todo">frames kept / registered, splat count, .splat size, training time, scale cross-check, walkable m² vs real floor area, viewer FPS</span></td></tr>
+</table>
+
+<h2><b>8</b>Road to the finale</h2>
+<p><b>AR navigation</b>: the twin is metric and gravity-aligned, so a WebXR session only needs one rigid transform from the phone's tracking frame to the twin. A QR anchor at the entrance, or matching against twin renders, can supply it. The A* route then becomes arrows anchored on the real floor. <b>Auto-POIs</b>: open-vocabulary detection on the training frames, triangulated into the twin with known camera poses, so the twin labels itself ("sofa", "fridge"). <b>Robust SfM</b>: MASt3R as a fallback for textureless venues.</p>
+
+<h2><b>9</b>Open-source credits</h2>
+<p>three.js (MIT), GaussianSplats3D (MIT), nerfstudio (Apache-2.0), gsplat (Apache-2.0), COLMAP (BSD), FFmpeg (LGPL), Vite (MIT), NumPy (BSD), Pillow (MIT-CMU). Navigation, grid extraction, frame selection and the viewer application are original work.</p>
+
+</body>
+</html>
