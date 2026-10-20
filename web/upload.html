@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wayfarer Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Cpath d=%22M16 2a10 10 0 0 0-10 10c0 7.5 10 18 10 18s10-10.5 10-18A10 10 0 0 0 16 2z%22 fill=%22%23ff8a3d%22/%3E%3Ccircle cx=%2216%22 cy=%2212%22 r=%224%22 fill=%22%230e1a2b%22/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/upload.css" />
+</head>
+<body class="studio">
+  <main>
+    <header>
+      <h1>Wayfarer <span>Studio</span></h1>
+      <p>Drop a phone video of an indoor space and get back a walkable 3D twin. Film it following the <a href="https://github.com/ayush-jadaun/Wayfarer/blob/main/docs/SOP.md" target="_blank" rel="noopener">capture SOP</a>.</p>
+    </header>
+
+    <div id="server-down" class="banner" hidden>
+      The job server isn't running. Start everything with <code>start.bat</code> (or <code>.venv-ns\Scripts\python pipeline\server.py</code>).
+    </div>
+
+    <form id="new-job" class="card">
+      <label id="drop" for="file">
+        <input id="file" type="file" accept="video/*" hidden />
+        <strong id="drop-title">Drop your capture video here</strong>
+        <span id="drop-sub">or click to choose · MP4 / MOV</span>
+      </label>
+      <div class="fields">
+        <label>Name <input name="title" placeholder="My Home" maxlength="40" /></label>
+        <label>Ceiling height (m) <input name="ceiling" type="number" step="0.01" min="1.8" max="12" placeholder="2.75" title="Tape-measured floor-to-ceiling height. Gives exact real-world scale." /></label>
+        <label>Quality
+          <select name="quality">
+            <option value="fast">Preview (~10 min)</option>
+            <option value="default" selected>Full (~40 min)</option>
+            <option value="high">High (~60 min, more VRAM)</option>
+          </select>
+        </label>
+      </div>
+      <button class="primary" type="submit" id="go" disabled>Build twin</button>
+      <div id="upload-bar" class="bar" hidden><div></div></div>
+    </form>
+
+    <section id="job" class="card" hidden>
+      <div class="job-head">
+        <h2 id="job-title"></h2>
+        <span id="job-status" class="pill"></span>
+      </div>
+      <ol id="steps">
+        <li data-step="1">Frames<small>pick sharp frames</small></li>
+        <li data-step="2">Camera poses<small>COLMAP</small></li>
+        <li data-step="3">Training<small>Gaussian splats on GPU</small></li>
+        <li data-step="4">Export<small>splat file</small></li>
+        <li data-step="5">Walkable map<small>floor, scale, walls</small></li>
+      </ol>
+      <pre id="log" aria-live="polite"></pre>
+      <a id="open" class="button primary" hidden>Open twin →</a>
+    </section>
+
+    <section class="card">
+      <h2>Your twins</h2>
+      <ul id="scenes"></ul>
+    </section>
+  </main>
+  <script type="module" src="/src/upload.js"></script>
+</body>
+</html>
