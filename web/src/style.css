@@ -45,7 +45,9 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--cyan)
 #results li { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
 #results li[aria-selected="true"], #results li:hover { background: #1b3150; }
 #results small { color: var(--muted); }
-.actions { margin-left: auto; display: flex; gap: 8px; }
+.actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.studio-link { color: var(--text); text-decoration: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
+.studio-link:hover { border-color: var(--cyan); }
 
 #nav-hud {
   position: fixed; top: 64px; left: 50%; transform: translateX(-50%); display: flex; gap: 14px; align-items: center;
