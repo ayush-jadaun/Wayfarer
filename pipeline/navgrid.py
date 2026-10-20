@@ -188,20 +188,23 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     R = basis_from_up(n)
     hh = (P - c_floor) @ n  # raw height above floor
 
-    ceil_raw = None
-    top = hh > np.quantile(hh, 0.6)
-    if np.count_nonzero(top) > 100:
-        try:
-            nc, cc, inl = ransac_plane(sub(top), n, rng, max_tilt=8, tol=tol)
-            if inl.mean() > 0.08:
-                ceil_raw = float((cc - c_floor) @ n)
-        except RuntimeError:
-            pass
-
-    cam_raw = None
+    cam_raw = cam_top = None
     if cameras is not None:
         cam_h = (cameras[0] - c_floor) @ n
-        cam_raw = float(np.median(cam_h))
+        cam_raw, cam_top = float(np.median(cam_h)), float(np.quantile(cam_h, 0.95))
+
+    # the ceiling must sit above every camera: rejects floater layers that form around the capture height
+    ceil_raw = None
+    top = hh > (cam_top * 1.15 if cam_top and cam_top > 0 else np.quantile(hh, 0.6))
+    if np.count_nonzero(top) > 200:
+        try:
+            nc, cc, inl = ransac_plane(sub(top), n, rng, max_tilt=8, tol=tol)
+            cand = float((cc - c_floor) @ n)
+            above = np.count_nonzero(hh[top] > cand + 3 * tol) / np.count_nonzero(top)
+            if inl.mean() > 0.08 and above < 0.05:  # a ceiling caps the room: almost nothing above it
+                ceil_raw = cand
+        except RuntimeError:
+            pass
 
     estimates = {}
     if ceil_raw:
@@ -219,6 +222,9 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     else:
         raise RuntimeError('cannot infer metric scale: pass --scale, or capture with the ceiling visible')
     log(f'  scale {s:.4f} m/unit from {src}  ' + '  '.join(f'[{k}: {e:.4f}]' for k, e in estimates.items()))
+    if len(estimates) == 2 and abs(estimates['ceiling'] / estimates['camera'] - 1) > 0.12:
+        log(f'  WARNING: ceiling and camera-height scale disagree by {abs(estimates["ceiling"] / estimates["camera"] - 1):.0%}; '
+            'check the ceiling measurement or pass --scale')
 
     # aligned metric coordinates (before yaw): y up, floor at 0
     A = s * ((P - c_floor) @ R.T)
@@ -233,10 +239,14 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     t = -s * (R_total @ c_floor)  # p' = s R p + t
     log(f'  floor tilt {math.degrees(math.acos(min(1, n @ up))):.1f} deg vs up hint, wall yaw {math.degrees(yaw):.1f} deg')
 
-    # grid extent from solid geometry near the floor
+    # grid extent from solid geometry near the floor, clamped around where the camera actually went
     near = (A[:, 1] > -0.1) & (A[:, 1] < hi)
     x0, z0 = np.quantile(A[near][:, [0, 2]], 0.003, 0) - 0.3
     x1, z1 = np.quantile(A[near][:, [0, 2]], 0.997, 0) + 0.3
+    if cameras is not None:
+        C = s * (cameras[0] @ R_total.T) + t
+        (cx0, cz0), (cx1, cz1) = C[:, [0, 2]].min(0) - 4, C[:, [0, 2]].max(0) + 4
+        x0, z0, x1, z1 = max(x0, cx0), max(z0, cz0), min(x1, cx1), min(z1, cz1)
     W, H = int(math.ceil((x1 - x0) / cell)), int(math.ceil((z1 - z0) / cell))
     ix = np.clip(((A[:, 0] - x0) / cell).astype(int), 0, W - 1)
     iz = np.clip(((A[:, 2] - z0) / cell).astype(int), 0, H - 1)
@@ -244,16 +254,18 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     count = lambda m: np.bincount(flat[m], weights=alpha[m], minlength=W * H).reshape(H, W)
 
     obs_n, tall_n = count(wall), count((A[:, 1] > tall_from) & (A[:, 1] < hi))
-    floor_n = count(np.abs(A[:, 1]) < 0.06)
+    near_floor = np.abs(A[:, 1]) < 0.15
+    band = float(np.clip(3 * A[near_floor, 1].std(), 0.04, 0.12)) if near_floor.any() else 0.06  # floor 'thickness'
+    floor_n = count(np.abs(A[:, 1]) < band)
     nz = obs_n[obs_n > 0]
     thr = max(2.0, 0.025 * np.quantile(nz, 0.9)) if len(nz) else 2.0  # walls are dense, table tops are not
     obstacle = obs_n >= thr
     tall = obstacle & (tall_n >= thr * 0.5)
-    floor = floor_n > 0
+    fz = floor_n[floor_n > 0]
+    floor = floor_n >= (0.2 * np.median(fz) if len(fz) else 1)  # real floor is dense; lone floaters are not
 
     cam_cells = []
     if cameras is not None:
-        C = s * (cameras[0] @ R_total.T) + t
         for cx, cz in zip(((C[:, 0] - x0) / cell).astype(int), ((C[:, 2] - z0) / cell).astype(int)):
             if 0 <= cx < W and 0 <= cz < H:
                 cam_cells.append((cz, cx))
@@ -261,12 +273,19 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
                 obstacle[cz, cx] = tall[cz, cx] = False
 
     floor = erode(dilate(floor, 2), 2)  # close holes in textureless floor
-    free = floor & ~obstacle
-    if cam_cells:
-        walk = components_touching(free, cam_cells)
+    # free space = no obstacle and near floor evidence; walls stop the flood fill, so sparse floors still fill in.
+    # Seal wall gaps < 40 cm for the fill (doors are >= 70 cm), then grow back up to the real wall edge.
+    seal = max(1, round(0.2 / cell))
+    free = ~obstacle & dilate(floor, 5)
+    sealed = free & ~dilate(obstacle, seal)
+    seeds = [c for c in cam_cells if sealed[c]] or cam_cells
+    if seeds:
+        walk = components_touching(sealed, seeds)
     else:  # largest component
-        walk = components_touching(free, [tuple(np.argwhere(free)[np.argmax(dist_from_blocked(free)[free])])])
-    log(f'  grid {W}x{H} @ {cell} m, {walk.sum() * cell * cell:.1f} m^2 walkable, obstacle threshold {thr:.1f}')
+        walk = components_touching(sealed, [tuple(np.argwhere(sealed)[np.argmax(dist_from_blocked(sealed)[sealed])])])
+    for _ in range(seal):
+        walk = dilate(walk, 1) & free
+    log(f'  grid {W}x{H} @ {cell} m, {walk.sum() * cell * cell:.1f} m^2 walkable, obstacle threshold {thr:.1f}, floor band {band:.2f} m')
 
     grid = np.full((H, W), ' ')
     grid[walk] = '.'
@@ -276,9 +295,12 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     grid[near & tall] = '#'
 
     if cameras is not None and cam_cells:
+        # start where the capture started, facing into the open space (the first frame often faces a wall)
         C = s * (cameras[0] @ R_total.T) + t
-        F = cameras[1] @ R_total.T
-        spawn = {'x': round(float(C[0, 0]), 2), 'z': round(float(C[0, 2]), 2), 'yaw': round(math.atan2(-F[0, 0], -F[0, 2]), 3)}
+        wz, wx = np.argwhere(walk).mean(0)
+        mx, mz = x0 + (wx + 0.5) * cell, z0 + (wz + 0.5) * cell
+        spawn = {'x': round(float(C[0, 0]), 2), 'z': round(float(C[0, 2]), 2),
+                 'yaw': round(math.atan2(-(mx - C[0, 0]), -(mz - C[0, 2])), 3)}
     else:
         d = dist_from_blocked(walk)
         cz, cx = np.unravel_index(np.argmax(d), d.shape)
