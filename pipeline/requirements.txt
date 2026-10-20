@@ -1,0 +1,3 @@
+# Wayfarer pipeline glue (navgrid + frame selection). Training deps: see docs/SETUP.md (nerfstudio + COLMAP).
+numpy>=1.24
+pillow>=10
