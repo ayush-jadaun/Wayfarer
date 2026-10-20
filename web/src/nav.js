@@ -155,9 +155,17 @@ export function nextInstruction(pts, pos, yaw) {
   turn = Math.atan2(Math.sin(turn), Math.cos(turn)); // wrap to [-pi, pi]
   const dist = Math.hypot(tx - pos[0], tz - pos[1]);
   const deg = (turn * 180) / Math.PI;
-  const text = Math.abs(deg) < 25 ? `Go straight ${dist.toFixed(1)} m`
-    : Math.abs(deg) > 150 ? 'Turn around'
-      : `${deg > 0 ? 'Turn left' : 'Turn right'}${Math.abs(deg) < 60 ? ' slightly' : ''}`;
+  let text;
+  if (Math.abs(deg) < 25) {
+    text = `Go straight ${dist.toFixed(1)} m`;
+    if (pts.length > 2) { // preview the turn at the upcoming corner
+      const [nx, nz] = pts[2];
+      let t2 = Math.atan2(-(nx - tx), -(nz - tz)) - want;
+      t2 = (Math.atan2(Math.sin(t2), Math.cos(t2)) * 180) / Math.PI;
+      if (Math.abs(t2) >= 25) text += `, then ${t2 > 0 ? 'left' : 'right'}`;
+    } else text += ' to destination';
+  } else if (Math.abs(deg) > 150) text = 'Turn around';
+  else text = `${deg > 0 ? 'Turn left' : 'Turn right'}${Math.abs(deg) < 60 ? ' slightly' : ''}`;
   return { text, remaining, turn };
 }
 

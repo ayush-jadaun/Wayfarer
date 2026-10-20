@@ -47,4 +47,6 @@ test('instructions', () => {
   assert.match(nextInstruction([[0, 0], [0, -5]], [0, 0], 0).text, /straight/);
   // target to the +x side is on the right when facing -z
   assert.match(nextInstruction([[0, 0], [5, 0]], [0, 0], 0).text, /right/);
+  // straight now, corner ahead turns right (toward +x)
+  assert.equal(nextInstruction([[0, 0], [0, -3], [4, -3]], [0, 0], 0).text, 'Go straight 3.0 m, then right');
 });
