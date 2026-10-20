@@ -18,10 +18,13 @@ Tested on Windows 11 with an RTX 4070 Laptop GPU (8 GB). Linux works the same wa
 uv venv .venv-ns --python 3.10
 uv pip install --python .venv-ns/Scripts/python.exe torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118
 uv pip install --python .venv-ns/Scripts/python.exe nerfstudio==1.1.5 "numpy<2"
-uv pip install --python .venv-ns/Scripts/python.exe gsplat==1.4.0 --index-url https://docs.gsplat.studio/whl/pt21cu118 --extra-index-url https://pypi.org/simple
+uv pip install --python .venv-ns/Scripts/python.exe --reinstall --no-deps "https://github.com/nerfstudio-project/gsplat/releases/download/v1.4.0/gsplat-1.4.0%2Bpt21cu118-cp310-cp310-win_amd64.whl"
+uv pip install --python .venv-ns/Scripts/python.exe "setuptools<70"
 ```
 
-The prebuilt gsplat wheel means you don't need a CUDA toolkit or a compiler.
+- The prebuilt gsplat wheel ships the compiled CUDA kernels, so you don't need a CUDA toolkit or a compiler. The plain PyPI `gsplat` would try to JIT-compile them and fail with `'NoneType' object has no attribute 'CameraModelType'`. (On Linux, use the matching `linux_x86_64` wheel.)
+- torch 2.1 still imports `pkg_resources`, which setuptools 70+ removed.
+- On a flaky connection, set `UV_HTTP_TIMEOUT=900` first: the torch wheel is 2.5 GB.
 
 Check it:
 
@@ -32,7 +35,9 @@ colmap -h
 
 ## 3. Run
 
-Activate the venv so `ns-*` and the pipeline share it, then:
+**Easiest:** double-click `start.bat`. It starts the job server and the web app, then opens **Wayfarer Studio** in your browser. Drop the video, enter the ceiling height, press *Build twin*, and open the twin when it finishes.
+
+**Command line:** activate the venv so `ns-*` and the pipeline share it, then:
 
 ```bash
 .venv-ns/Scripts/activate

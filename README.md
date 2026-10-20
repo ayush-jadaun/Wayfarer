@@ -45,7 +45,9 @@ Open `?scene=<name>` to load a reconstructed scene from `web/public/scenes/<name
 
 1. Film the space following the **[capture SOP](docs/SOP.md)**.
 2. Install the pipeline once: **[docs/SETUP.md](docs/SETUP.md)**.
-3. Run:
+3. Double-click **`start.bat`**, drop the video into **Wayfarer Studio**, and press *Build twin*. You'll see live progress through each step, then an *Open twin* button.
+
+Or from the command line:
 
 ```bash
 python pipeline/wayfarer.py walk.mp4 --name home --ceiling 2.75
@@ -59,12 +61,14 @@ This writes `web/public/scenes/home/` (`scene.splat`, `scene.json`, and a `grid.
 pipeline/
   wayfarer.py       one-command orchestrator (frames → sfm → train → export → navgrid)
   navgrid.py        splat → floor-aligned metric occupancy grid + compact .splat + scene.json
+  server.py         local job server behind the upload studio (stdlib only)
   test_navgrid.py   synthetic-room self-check (python pipeline/test_navgrid.py)
 web/
   src/nav.js        occupancy grid, A*, smoothing, routing, turn instructions (pure, unit-tested)
   src/player.js     first-person controller with grid collision
   src/minimap.js    top-down map
   src/main.js       scene loading, splat rendering, POIs, search, navigation UI
+  upload.html       Wayfarer Studio: drag-and-drop capture upload with live pipeline progress
   test/             node:test unit tests (npm test)
   public/scenes/    one folder per twin; demo/ is a procedural sample
 docs/
