@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import shutil
+import subprocess
 from collections import deque
 from pathlib import Path
 
@@ -57,7 +58,8 @@ def write_splat(v, path, min_alpha=0.02):
 
 def load_cameras(transforms_json, dataparser_json):
     """Camera centres + forward vectors in the splat's (nerfstudio dataparser) frame."""
-    frames = json.loads(Path(transforms_json).read_text())['frames']
+    # capture order (frame names are sequential); COLMAP's own order is by registration, not time
+    frames = sorted(json.loads(Path(transforms_json).read_text())['frames'], key=lambda f: f['file_path'])
     dp = json.loads(Path(dataparser_json).read_text())
     T, s = np.array(dp['transform']), dp['scale']
     c2w = np.array([f['transform_matrix'] for f in frames])[:, :3, :]
@@ -166,7 +168,7 @@ def components_touching(free, seeds):
 
 
 # ---------------------------------------------------------------- main build
-def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_height=1.4, default_ceiling=2.75,
+def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=None, camera_height=1.4, default_ceiling=2.75,
           cell=0.1, obstacle_band=(0.12, 1.9), tall_from=1.2, seed=0, log=print):
     rng = np.random.default_rng(seed)
     P = np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64)
@@ -207,12 +209,16 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
             pass
 
     estimates = {}
+    if marker:
+        estimates['marker'] = marker
     if ceil_raw:
         estimates['ceiling'] = (ceiling or default_ceiling) / ceil_raw
     if cam_raw and cam_raw > 0:
         estimates['camera'] = camera_height / cam_raw
     if scale:
         s, src = scale, '--scale'
+    elif marker:
+        s, src = marker, 'ArUco marker'
     elif ceiling and 'ceiling' in estimates:
         s, src = estimates['ceiling'], f'ceiling {ceiling} m'
     elif 'camera' in estimates:
@@ -222,9 +228,10 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     else:
         raise RuntimeError('cannot infer metric scale: pass --scale, or capture with the ceiling visible')
     log(f'  scale {s:.4f} m/unit from {src}  ' + '  '.join(f'[{k}: {e:.4f}]' for k, e in estimates.items()))
-    if len(estimates) == 2 and abs(estimates['ceiling'] / estimates['camera'] - 1) > 0.12:
-        log(f'  WARNING: ceiling and camera-height scale disagree by {abs(estimates["ceiling"] / estimates["camera"] - 1):.0%}; '
-            'check the ceiling measurement or pass --scale')
+    for k, e in estimates.items():
+        if abs(e / s - 1) > 0.12:
+            log(f'  WARNING: {k} estimate disagrees with the chosen scale by {abs(e / s - 1):.0%}; '
+                'check measurements or pass --scale')
 
     # aligned metric coordinates (before yaw): y up, floor at 0
     A = s * ((P - c_floor) @ R.T)
@@ -259,25 +266,36 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     floor_n = count(np.abs(A[:, 1]) < band)
     nz = obs_n[obs_n > 0]
     thr = max(2.0, 0.025 * np.quantile(nz, 0.9)) if len(nz) else 2.0  # walls are dense, table tops are not
-    obstacle = obs_n >= thr
+    obstacle = drop_small_blobs(obs_n >= thr, min_cells=max(2, round(0.03 / cell ** 2)))  # < 0.03 m^2 = floater
     tall = obstacle & (tall_n >= thr * 0.5)
     fz = floor_n[floor_n > 0]
     floor = floor_n >= (0.2 * np.median(fz) if len(fz) else 1)  # real floor is dense; lone floaters are not
 
-    cam_cells = []
+    cam_cells, path = [], np.zeros((H, W), bool)
     if cameras is not None:
-        for cx, cz in zip(((C[:, 0] - x0) / cell).astype(int), ((C[:, 2] - z0) / cell).astype(int)):
+        cxs, czs = ((C[:, 0] - x0) / cell).astype(int), ((C[:, 2] - z0) / cell).astype(int)
+        for i, (cx, cz) in enumerate(zip(cxs, czs)):
             if 0 <= cx < W and 0 <= cz < H:
                 cam_cells.append((cz, cx))
-                floor[max(0, cz - 1):cz + 2, max(0, cx - 1):cx + 2] = True  # the camera walked here
-                obstacle[cz, cx] = tall[cz, cx] = False
+            # the walk between consecutive frames is passable: a doorway you walked through can never be sealed
+            if i and max(abs(cx - cxs[i - 1]), abs(cz - czs[i - 1])) <= round(1.5 / cell):  # skip pose jumps
+                n = max(abs(cx - cxs[i - 1]), abs(cz - czs[i - 1])) + 1
+                lx = np.clip(np.round(np.linspace(cxs[i - 1], cx, n)).astype(int), 0, W - 1)
+                lz = np.clip(np.round(np.linspace(czs[i - 1], cz, n)).astype(int), 0, H - 1)
+                path[lz, lx] = True
+        for cz, cx in cam_cells:
+            path[cz, cx] = True
+        path = dilate(path, 1)
+        floor |= path
+        obstacle &= ~path
+        tall &= ~path
 
     floor = erode(dilate(floor, 2), 2)  # close holes in textureless floor
     # free space = no obstacle and near floor evidence; walls stop the flood fill, so sparse floors still fill in.
     # Seal wall gaps < 40 cm for the fill (doors are >= 70 cm), then grow back up to the real wall edge.
     seal = max(1, round(0.2 / cell))
     free = ~obstacle & dilate(floor, 5)
-    sealed = free & ~dilate(obstacle, seal)
+    sealed = (free & ~dilate(obstacle, seal)) | path
     seeds = [c for c in cam_cells if sealed[c]] or cam_cells
     if seeds:
         walk = components_touching(sealed, seeds)
@@ -315,6 +333,39 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, ceiling=None, camera_hei
     }
 
 
+def drop_small_blobs(mask, min_cells):
+    """Remove 8-connected blobs smaller than min_cells (isolated floaters), keep everything else."""
+    out, seen = mask.copy(), np.zeros_like(mask)
+    H, W = mask.shape
+    for z, x in np.argwhere(mask):
+        if seen[z, x]:
+            continue
+        blob, q = [], deque([(z, x)])
+        seen[z, x] = True
+        while q:
+            cz, cx = q.popleft()
+            blob.append((cz, cx))
+            for dz in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    nz, nx = cz + dz, cx + dx
+                    if 0 <= nz < H and 0 <= nx < W and mask[nz, nx] and not seen[nz, nx]:
+                        seen[nz, nx] = True
+                        q.append((nz, nx))
+        if len(blob) < min_cells:
+            for cz, cx in blob:
+                out[cz, cx] = False
+    return out
+
+
+def to_sog(ply, out):
+    """Compress with PlayCanvas splat-transform (installed in web/): ~10 B/splat with full SH, floaters filtered."""
+    cli = Path(__file__).resolve().parent.parent / 'web' / 'node_modules' / '@playcanvas' / 'splat-transform' / 'bin' / 'cli.mjs'
+    if not cli.exists() or not shutil.which('node'):
+        return False
+    r = subprocess.run(['node', str(cli), '-w', '--no-tty', '-q', str(ply), '-N', '-F', str(out)])
+    return r.returncode == 0 and out.exists()
+
+
 def dist_from_blocked(free):
     """Chebyshev distance to nearest non-free cell (cheap iterative erosion)."""
     d, m, k = np.zeros(free.shape, int), free.copy(), 0
@@ -348,20 +399,31 @@ def main():
     ap.add_argument('--ceiling', type=float, help='measured floor-to-ceiling height in metres')
     ap.add_argument('--camera-height', type=float, default=1.4, help='SOP phone height in metres')
     ap.add_argument('--cell', type=float, default=0.1, help='grid cell size in metres')
+    ap.add_argument('--marker-size', type=float, default=0.15, help='printed ArUco marker side in metres')
     a = ap.parse_args()
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     print(f'reading {a.splat}')
     v = read_ply(a.splat)
-    cams = load_cameras(a.transforms, a.dataparser) if a.transforms and a.dataparser else None
-    scene = build(v, cams, up=[float(x) for x in a.up.split(',')], scale=a.scale, ceiling=a.ceiling,
+    cams, marker = None, None
+    if a.transforms and a.dataparser:
+        cams = load_cameras(a.transforms, a.dataparser)
+        if not a.scale:
+            from marker_scale import marker_scale
+            marker = marker_scale(a.transforms, a.dataparser, a.marker_size)
+    scene = build(v, cams, up=[float(x) for x in a.up.split(',')], scale=a.scale, marker=marker, ceiling=a.ceiling,
                   camera_height=a.camera_height, cell=a.cell)
 
-    if 'f_dc_0' in v.dtype.names:
+    for stale in ('scene.sog', 'scene.splat', 'scene.ply'):
+        (out / stale).unlink(missing_ok=True)
+    if 'f_dc_0' in v.dtype.names and to_sog(a.splat, out / 'scene.sog'):
+        url = 'scene.sog'
+        print(f'  wrote scene.sog ({(out / url).stat().st_size / 1e6:.1f} MB, full SH)')
+    elif 'f_dc_0' in v.dtype.names:  # node/splat-transform unavailable: our own 32 B/splat packing
         n = write_splat(v, out / 'scene.splat')
-        print(f'  wrote scene.splat ({n:,} splats, {(out / "scene.splat").stat().st_size / 1e6:.1f} MB)')
         url = 'scene.splat'
+        print(f'  wrote scene.splat ({n:,} splats, {(out / url).stat().st_size / 1e6:.1f} MB)')
     else:
         shutil.copy(a.splat, out / 'scene.ply')
         url = 'scene.ply'
