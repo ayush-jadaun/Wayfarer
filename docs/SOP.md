@@ -7,7 +7,8 @@ How to film an indoor space with an ordinary smartphone so the pipeline produces
 | Item | Why |
 |---|---|
 | Any phone with a 1080p+ main camera | The 1x lens has the least distortion and the best low-light SNR |
-| Measuring tape | One measurement (ceiling height) fixes metric scale |
+| Printed scale marker ([`marker.svg`](marker.svg), A4, print at 100%) | Detected automatically; fixes metric scale to about 1% |
+| Measuring tape | Ceiling height, as a cross-check for the scale and a fallback if the marker is missed |
 | 10 minutes per ~50 m² | About 1 minute of footage per room |
 
 ## 1. Prepare the space (5 min)
@@ -16,7 +17,8 @@ How to film an indoor space with an ordinary smartphone so the pipeline produces
 2. **Ceiling fans and moving objects off/out.** Structure-from-Motion assumes a static scene; a spinning fan creates floaters.
 3. **Open every interior door fully.** Doorways are how separate rooms are stitched into one model.
 4. **Screens off, big mirrors covered or avoided.** Mirrors and screens show a "fake room" that the reconstruction will try to place behind the wall.
-5. **Measure floor-to-ceiling height** in one room with the tape and note it (e.g. `2.75`). This becomes `--ceiling 2.75` and gives centimetre-level metric scale.
+5. **Place the scale marker.** Print `docs/marker.svg` at 100% and check that the black square measures 150 mm with a ruler (if it doesn't, use `--marker-size` with the measured value in metres). Stick it **flat** on a wall or the floor in the first room, somewhere the camera passes within about 2 m.
+6. **Measure floor-to-ceiling height** in one room with the tape and note it (e.g. `2.75`). It becomes `--ceiling 2.75`. The pipeline cross-checks the marker, ceiling and camera-height estimates and warns if any disagree by more than 12%.
 
 ## 2. Phone settings
 
@@ -41,6 +43,8 @@ For **each room**:
 4. **One slow ceiling sweep per room.** Point up for ~3 s. The ceiling plane plus your tape measurement gives the metric scale.
 5. **Low pass around big furniture (optional).** One loop at ~0.8 m around beds/tables fills in the gaps under and around them.
 
+**Scale marker:** at the start, film the marker for about 5 s from 3 or more angles (left, centre, right) at 0.5–2 m, so it fills at least a tenth of the frame.
+
 **Between rooms:** walk *through* the doorway slowly, camera pointing forward, keeping both rooms in view for ~3 s. These frames tie the two rooms together.
 
 **Finish where you started** (loop closure). Seeing the start again lets COLMAP correct drift.
@@ -58,15 +62,15 @@ For **each room**:
 | **One long video** | Homes and small offices, up to ~8 min | `python pipeline/wayfarer.py walk.mp4 --name home --ceiling 2.75` |
 | **Room by room** | Large venues, or when a take goes wrong | `python pipeline/wayfarer.py room1.mp4 room2.mp4 hall.mp4 --name venue --ceiling 3.1` |
 
-In room-by-room mode, **every clip must start and end in a doorway, overlapping its neighbour**. The pipeline then switches COLMAP to exhaustive matching, so the clips register into one model without manual alignment.
+In room-by-room mode, **every clip must start and end in a doorway, overlapping its neighbour**. Up to 450 frames, the pipeline matches every frame against every other (exhaustive matching), so the clips register into one model without manual alignment. Above that, it switches to sequential matching with loop closure.
 
 ## 5. Quality gates (checked automatically, printed by the pipeline)
 
 | Gate | Pass | If it fails |
 |---|---|---|
 | Sharp frames kept | > 70 % of sampled frames | Re-shoot slower, with more light |
-| COLMAP registered frames | > 90 % of kept frames | Add doorway overlap, avoid blank walls |
-| **Scale cross-check**: ceiling estimate vs camera-height estimate | Within ~5 % | Re-measure the ceiling, or pass `--scale` |
+| COLMAP registered frames | > 90 % of kept frames, in a single model (below 50 % stops the run) | Add doorway overlap, avoid blank walls |
+| **Scale cross-check**: marker vs ceiling vs camera height | Agree within ~5 % | Re-print or re-film the marker, re-measure the ceiling, or pass `--scale` |
 | Walkable area | Roughly matches the real floor area | Re-shoot low-coverage rooms with more floor in view |
 
 ## 6. Privacy

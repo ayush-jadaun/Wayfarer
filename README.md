@@ -17,11 +17,12 @@ Built for **Namma Space, Techfest 2026-27, IIT Bombay**.
 |---|---|
 | **Photoreal twin** | 3D Gaussian Splatting, rendered in real time in any desktop browser with nothing to install |
 | **First-person roaming** | WASD + mouse look, run, collision with real walls and furniture, fly mode for a dollhouse view |
-| **Metric, level model** | Floor found with RANSAC; scale from a tape-measured ceiling, cross-checked against camera height |
+| **Robust camera poses** | COLMAP run directly with GPU SIFT and exhaustive matching (sequential + loop closure for long captures); the largest model is kept and registration is gated |
+| **Metric, level model** | Floor found with RANSAC; scale from a printed ArUco marker (about 1%), cross-checked against the tape-measured ceiling and camera height |
 | **Walkable grid** | Obstacles sliced 0.12–1.9 m above the floor, cleaned up with the camera's own walk path |
 | **POIs + search** | Tag rooms and items at the crosshair; ranked fuzzy search; look at a POI to reveal its name |
 | **Navigation** | A* on the grid with a body-radius safety margin, line-of-sight smoothing, animated floor arrows, live re-routing and turn-by-turn hints |
-| **Fast web viewer** | Compact `.splat` (~8x smaller than PLY), GPU-accelerated sorting when cross-origin isolated |
+| **Fast web viewer** | [Spark](https://sparkjs.dev) renderer with level-of-detail (fixed splat budget per frame) and SOG compression: about 11x smaller than PLY, with full view-dependent colour |
 
 ## Quick start (viewer only)
 
@@ -53,16 +54,18 @@ Or from the command line:
 python pipeline/wayfarer.py walk.mp4 --name home --ceiling 2.75
 ```
 
-This writes `web/public/scenes/home/` (`scene.splat`, `scene.json`, and a `grid.png` preview). Each step is resumable, and `--force <step>` re-runs from that step.
+This writes `web/public/scenes/home/` (`scene.sog`, `scene.json`, and a `grid.png` preview). Each step is resumable, and `--force <step>` re-runs from that step.
 
 ## Repository layout
 
 ```
 pipeline/
   wayfarer.py       one-command orchestrator (frames → sfm → train → export → navgrid)
-  navgrid.py        splat → floor-aligned metric occupancy grid + compact .splat + scene.json
+  navgrid.py        splat → floor-aligned metric occupancy grid + SOG + scene.json
+  marker_scale.py   metric scale from a printed ArUco marker (triangulated from the COLMAP poses)
   server.py         local job server behind the upload studio (stdlib only)
   test_navgrid.py   synthetic-room self-check (python pipeline/test_navgrid.py)
+  test_marker_scale.py  rendered-marker self-check
 web/
   src/nav.js        occupancy grid, A*, smoothing, routing, turn instructions (pure, unit-tested)
   src/player.js     first-person controller with grid collision
@@ -73,6 +76,7 @@ web/
   public/scenes/    one folder per twin; demo/ is a procedural sample
 docs/
   SOP.md            capture rulebook
+  marker.svg        printable A4 scale marker
 ```
 
 ### `scene.json`
@@ -83,7 +87,7 @@ docs/
   "rows": ["  ###..", "..."],                            // '.' walkable, '#' wall, 'o' furniture, ' ' unknown
   "floorY": 0, "wallHeight": 2.75, "eyeHeight": 1.6,
   "spawn": { "x": 1.2, "z": 3.4, "yaw": 0 },
-  "splat": { "url": "scene.splat", "position": [...], "rotation": [x, y, z, w], "scale": [s, s, s] },
+  "splat": { "url": "scene.sog", "position": [...], "rotation": [x, y, z, w], "scale": [s, s, s] },
   "pois": [{ "id": "kitchen", "name": "Kitchen", "category": "room", "x": 4.1, "z": 2.0 }]
 }
 ```
@@ -95,13 +99,16 @@ The grid is plain text on purpose: you can fix a wall the scan missed in any tex
 ```bash
 cd web && npm test                  # pathfinding, collision, instructions
 python pipeline/test_navgrid.py     # floor/scale/wall recovery on a synthetic splat
+.venv-ns/Scripts/python pipeline/test_marker_scale.py   # ArUco scale recovery on rendered views
 ```
 
 ## Credits
 
 Open-source software we build on:
 - [three.js](https://threejs.org) (MIT)
-- [GaussianSplats3D](https://github.com/mkkellogg/GaussianSplats3D) (MIT)
+- [Spark](https://github.com/sparkjsdev/spark) (MIT)
+- [splat-transform](https://github.com/playcanvas/splat-transform) (MIT)
+- [OpenCV](https://opencv.org) (Apache-2.0)
 - [nerfstudio](https://nerf.studio) (Apache-2.0)
 - [gsplat](https://github.com/nerfstudio-project/gsplat) (Apache-2.0)
 - [COLMAP](https://colmap.github.io) (BSD)
