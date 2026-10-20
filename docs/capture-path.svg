@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" font-family="system-ui, sans-serif" font-size="13">
+  <rect width="720" height="420" fill="#0e1a2b"/>
+  <!-- walls -->
+  <g fill="none" stroke="#4cc3e6" stroke-width="5">
+    <path d="M30 30 H690 V340 H30 Z"/>
+    <path d="M400 30 V140 M400 200 V340"/>
+  </g>
+  <!-- furniture -->
+  <g fill="#1f3a5c" stroke="#4cc3e6" stroke-width="1.5">
+    <rect x="80" y="70" width="170" height="40" rx="4"/>
+    <rect x="110" y="230" width="140" height="60" rx="4"/>
+    <rect x="500" y="80" width="140" height="100" rx="4"/>
+    <rect x="610" y="240" width="40" height="80" rx="4"/>
+  </g>
+  <g fill="#9fb3c8"><text x="120" y="95">sofa</text><text x="150" y="265">table</text><text x="550" y="135">bed</text></g>
+  <!-- capture walk: perimeter loops + doorway transition -->
+  <g fill="none" stroke="#ff8a3d" stroke-width="3" stroke-dasharray="9 7">
+    <path d="M70 300 V60 H360 V170 H440 V60 H660 V310 H440 V170 M360 170 V310 H70"/>
+  </g>
+  <!-- capture points with view cones -->
+  <g fill="#4cc3e6" fill-opacity="0.18" stroke="none">
+    <path d="M70 60 L130 70 A60 60 0 0 1 80 120 Z"/>
+    <path d="M360 60 L350 120 A60 60 0 0 1 300 70 Z"/>
+    <path d="M70 300 L80 240 A60 60 0 0 1 130 290 Z"/>
+    <path d="M360 310 L300 300 A60 60 0 0 1 350 250 Z"/>
+    <path d="M440 60 L500 70 A60 60 0 0 1 450 120 Z"/>
+    <path d="M660 60 L650 120 A60 60 0 0 1 600 70 Z"/>
+    <path d="M660 310 L600 300 A60 60 0 0 1 650 250 Z"/>
+    <path d="M440 310 L450 250 A60 60 0 0 1 500 300 Z"/>
+  </g>
+  <g fill="#0e1a2b" stroke="#4cc3e6" stroke-width="3">
+    <circle cx="70" cy="60" r="8"/><circle cx="360" cy="60" r="8"/><circle cx="70" cy="300" r="8"/><circle cx="360" cy="310" r="8"/>
+    <circle cx="440" cy="60" r="8"/><circle cx="660" cy="60" r="8"/><circle cx="660" cy="310" r="8"/><circle cx="440" cy="310" r="8"/>
+  </g>
+  <!-- doorway highlight -->
+  <rect x="385" y="145" width="30" height="50" fill="#ff8a3d" fill-opacity="0.25" stroke="#ff8a3d"/>
+  <text x="372" y="215" fill="#ff8a3d" font-weight="600">doorway: 3 s overlap</text>
+  <!-- start -->
+  <text x="78" y="330" fill="#f3efe6">start / end (loop closure)</text>
+  <!-- legend -->
+  <g transform="translate(30 372)" fill="#f3efe6">
+    <circle cx="8" cy="8" r="7" fill="#0e1a2b" stroke="#4cc3e6" stroke-width="3"/><text x="24" y="13">capture point: stop 2 s, sweep 90°</text>
+    <path d="M270 8 H310" stroke="#ff8a3d" stroke-width="3" stroke-dasharray="9 7"/><text x="320" y="13">capture walk, chest height, ≤ 0.5 m/s</text>
+    <path d="M565 8 L595 0 A30 30 0 0 1 595 16 Z" fill="#4cc3e6" fill-opacity="0.35"/><text x="602" y="13">camera view</text>
+  </g>
+</svg>
