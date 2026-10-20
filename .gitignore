@@ -1,0 +1,9 @@
+node_modules/
+dist/
+__pycache__/
+.venv*/
+# pipeline scratch: frames, COLMAP db, checkpoints
+work/
+# competition brief (not ours to redistribute)
+*.pdf
+.DS_Store
