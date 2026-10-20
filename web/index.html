@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wayfarer</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <div id="crosshair"></div>
+
+  <header id="topbar">
+    <div class="brand">Wayfarer<span id="scene-name"></span></div>
+    <div id="search">
+      <input id="q" type="search" placeholder="Search rooms or items  ( / )" autocomplete="off" aria-label="Search rooms or items" />
+      <ul id="results" role="listbox"></ul>
+    </div>
+    <div class="actions">
+      <button id="btn-tag" title="Tag a POI at the crosshair (T)">+ Tag POI</button>
+      <button id="btn-export" title="Download POIs as JSON">Export POIs</button>
+    </div>
+  </header>
+
+  <div id="nav-hud" hidden>
+    <div id="nav-arrow">↑</div>
+    <div>
+      <div id="nav-text"></div>
+      <div id="nav-sub"></div>
+    </div>
+    <button id="nav-stop" aria-label="Stop navigation">✕</button>
+  </div>
+
+  <div id="look-label" hidden></div>
+
+  <canvas id="minimap" title="Click to navigate there (M to enlarge)"></canvas>
+
+  <div id="poi-card" hidden>
+    <h3 id="poi-name"></h3>
+    <p id="poi-desc"></p>
+    <div class="row">
+      <button id="poi-go" class="primary">Navigate</button>
+      <button id="poi-jump">Jump there</button>
+      <button id="poi-del" class="danger">Delete</button>
+      <button id="poi-close">Close</button>
+    </div>
+  </div>
+
+  <form id="tag-form" hidden>
+    <h3>New point of interest</h3>
+    <input name="name" placeholder="Name, e.g. Meeting Room A" required />
+    <select name="category">
+      <option value="room">Room / zone</option>
+      <option value="item">Item</option>
+      <option value="exit">Entrance / exit</option>
+    </select>
+    <input name="desc" placeholder="Description (optional)" />
+    <div class="row"><button class="primary" type="submit">Save</button><button type="button" id="tag-cancel">Cancel</button></div>
+  </form>
+
+  <div id="overlay">
+    <div class="panel">
+      <h1>Wayfarer</h1>
+      <p id="status">Loading scene…</p>
+      <button id="start" class="primary" disabled>Click to explore</button>
+      <table class="keys">
+        <tr><td>W A S D</td><td>move</td><td>Mouse</td><td>look</td></tr>
+        <tr><td>Shift</td><td>run</td><td>F</td><td>fly / walk</td></tr>
+        <tr><td>/</td><td>search</td><td>T</td><td>tag POI</td></tr>
+        <tr><td>M</td><td>big map</td><td>G</td><td>blueprint</td></tr>
+        <tr><td>Esc</td><td>free mouse</td><td>N</td><td>stop route</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
