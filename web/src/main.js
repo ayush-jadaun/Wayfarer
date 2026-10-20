@@ -27,7 +27,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight); labels.setSize(innerWidth, innerHeight);
 });
 
-let data, grid, margin, player, minimap, blueprint;
+let data, grid, margin, player, minimap, blueprint, splat;
 let pois = [];
 const poiObjects = new Map();
 let route = null; // { target: {name,x,z}, pts, arrivedAt }
@@ -51,7 +51,8 @@ async function boot() {
     $('status').textContent = 'Loading 3D capture…';
     const { DropInViewer } = await import('@mkkellogg/gaussian-splats-3d');
     const iso = self.crossOriginIsolated; // shared memory needs COOP/COEP headers
-    const splat = new DropInViewer({ gpuAcceleratedSort: iso, sharedMemoryForWorkers: iso });
+    const gpuSort = iso && new URLSearchParams(location.search).get('sort') !== 'cpu'; // ?sort=cpu for software GL
+    splat = new DropInViewer({ gpuAcceleratedSort: gpuSort, sharedMemoryForWorkers: iso });
     await splat.addSplatScene(new URL(data.splat.url, location.origin + sceneDir).href, {
       position: data.splat.position, rotation: data.splat.rotation, scale: data.splat.scale,
       splatAlphaRemovalThreshold: 5, showLoadingUI: false, progressiveLoad: false,
@@ -362,4 +363,4 @@ function frame() {
 }
 
 // exposed for debugging / demo recording from the console
-Object.assign(window, { wayfarer: { get player() { return player; }, get route() { return route; }, routeLength } });
+Object.assign(window, { wayfarer: { get player() { return player; }, get route() { return route; }, get splat() { return splat; }, routeLength } });
