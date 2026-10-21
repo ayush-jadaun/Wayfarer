@@ -89,19 +89,24 @@ def step_frames(inputs, out, fps, max_frames, max_side):
         clips.setdefault(f.name[:3], []).append(f)
     over = -(-len(frames) // max_frames)  # ceil: how much we must thin out to stay under max_frames
     window = max(2, over)
-    kept = []
+    kept, dropped = [], 0
     for prefix, clip in clips.items():
         scores = [sharpness(f) for f in clip]
-        med = float(np.median(scores))
         w = max(1, over) if prefix in photos else window
+        r = max(2, int(2 * fps))  # +-2 s of video: same view content, so sharpness is comparable
         for k in range(0, len(clip), w):
             best = max(range(k, min(k + w, len(clip))), key=scores.__getitem__)
-            if scores[best] > 0.35 * med:  # whole window blurry (fast pan) -> drop it
+            # compare with the sharpest frame from the same moment, not a global median: a plain wall is
+            # naturally low-contrast yet sharp, while motion blur is low relative to its neighbours
+            local = max(scores[max(0, best - r):best + r + 1])
+            if prefix in photos or scores[best] >= 0.55 * local:
                 kept.append(clip[best])
+            else:
+                dropped += 1
     for f in kept:
         shutil.copy(f, out / f.name)
     shutil.rmtree(raw)
-    print(f'  kept {len(kept)} sharp frames of {len(frames)} (window {window})')
+    print(f'  kept {len(kept)} sharp frames of {len(frames)} (window {window}, {dropped} windows rejected as motion-blurred)')
     return {'framesSampled': len(frames), 'framesKept': len(kept), 'clips': len(inputs)}
 
 
@@ -190,7 +195,7 @@ def main():
     ap.add_argument('--work', type=Path, default=ROOT / 'work', help='scratch dir for frames, COLMAP, checkpoints')
     ap.add_argument('--ceiling', type=float, help='tape-measured floor-to-ceiling height (m) for metric scale')
     ap.add_argument('--camera-height', type=float, default=1.4, help='phone height held during capture (m)')
-    ap.add_argument('--fps', type=float, default=6, help='frames sampled per second of video before sharpness filtering')
+    ap.add_argument('--fps', type=float, default=8, help='candidate frames per second of video; the sharpest per window are kept')
     ap.add_argument('--max-frames', type=int, default=500, help='more views = better coverage; training time barely changes')
     ap.add_argument('--max-side', type=int, help='longest image side in px (default: 1280, or 1600 for --quality high)')
     ap.add_argument('--matching', choices=['auto', 'exhaustive', 'sequential'], default='auto',
