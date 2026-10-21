@@ -303,6 +303,8 @@ function wireUi() {
     else if (e.code === 'KeyG') setBlueprint(!blueprint.visible);
     else if (e.code === 'KeyM') $('minimap').classList.toggle('big');
     else if (e.code === 'KeyB') toggleEdit();
+    else if (e.code === 'KeyP') startTour();
+    else if (tour && e.code === 'Escape') stopTour();
     else if (e.code === 'KeyN') stopRoute();
   });
 
@@ -359,6 +361,7 @@ function wireUi() {
 
   // map editing: left-drag paints walls, right-drag erases (mirrors, glass doors, gaps the scan missed)
   $('btn-edit').addEventListener('click', toggleEdit);
+  $('btn-tour').addEventListener('click', startTour);
   const mm = $('minimap');
   mm.addEventListener('contextmenu', (e) => { if (editing) e.preventDefault(); });
   mm.addEventListener('pointerdown', (e) => {
@@ -424,6 +427,85 @@ function applyStoredEdits() {
   margin.inflated = inflate(grid, 0.3);
 }
 
+// ---------- auto tour (for demo videos: Win+Alt+R records the window) ----------
+let tour = null;
+const ease = (t) => t * t * (3 - 2 * t);
+const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+function startTour() {
+  if (tour) return stopTour();
+  player.unlock(); hide('poi-card'); $('overlay').hidden = true;
+  if (player.fly) player.toggleFly();
+  // visit POIs nearest-first from the spawn, rooms and items alike
+  const left = [...pois], stops = [];
+  let at = [player.x, player.z];
+  while (left.length && stops.length < 8) {
+    left.sort((a, b) => Math.hypot(a.x - at[0], a.z - at[1]) - Math.hypot(b.x - at[0], b.z - at[1]));
+    const p = left.shift();
+    stops.push(p); at = [p.x, p.z];
+  }
+  const cx = grid.ox + (grid.w * grid.cell) / 2, cz = grid.oz + (grid.h * grid.cell) / 2;
+  const top = Math.max(grid.w, grid.h) * grid.cell * 0.9;
+  tour = { phase: 'intro', t: 0, stops, i: 0, from: { x: cx, z: cz + top * 0.35, y: top, pitch: -1.15, yaw: 0 },
+    to: { x: player.x, z: player.z, y: player.floorY + player.eyeHeight, pitch: -0.05, yaw: player.yaw } };
+  $('btn-tour').classList.add('primary');
+}
+function stopTour() {
+  tour = null; stopRoute();
+  player.y = player.floorY + player.eyeHeight;
+  $('btn-tour').classList.remove('primary');
+}
+function nextStop() {
+  const p = tour.stops[tour.i];
+  if (!p) { // finale: rise back to the overview
+    tour.phase = 'outro'; tour.t = 0;
+    tour.from = { x: player.x, z: player.z, y: player.y, pitch: player.pitch, yaw: player.yaw };
+    tour.to = { ...tour.intro, yaw: player.yaw };
+    stopRoute();
+    return;
+  }
+  startRoute(p);
+  tour.path = route?.pts?.slice(); // the tour walks a fixed copy; live re-routing keeps directions fresh
+  tour.phase = tour.path ? 'walk' : 'skip'; tour.d = 0; tour.t = 0;
+}
+function pointAt(pts, d) { // position along a polyline at distance d
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1], [bx, bz] = pts[i], len = Math.hypot(bx - ax, bz - az);
+    if (d <= len) return [ax + ((bx - ax) * d) / len, az + ((bz - az) * d) / len];
+    d -= len;
+  }
+  return pts[pts.length - 1];
+}
+function tourStep(dt) {
+  tour.t += dt;
+  const pl = player;
+  if (tour.phase === 'intro' || tour.phase === 'outro') {
+    const k = ease(Math.min(1, tour.t / 7)), a = tour.from, b = tour.to;
+    pl.x = a.x + (b.x - a.x) * k; pl.z = a.z + (b.z - a.z) * k; pl.y = a.y + (b.y - a.y) * k;
+    pl.pitch = a.pitch + (b.pitch - a.pitch) * k; pl.yaw = lerpAngle(a.yaw, b.yaw, k);
+    if (tour.t >= 7.5) {
+      if (tour.phase === 'outro') return stopTour();
+      tour.intro = tour.from; nextStop();
+    }
+  } else if (tour.phase === 'walk') {
+    const pts = tour.path, total = routeLength(pts);
+    tour.d = Math.min(total, tour.d + 1.1 * dt); // relaxed walking pace
+    [pl.x, pl.z] = pointAt(pts, tour.d);
+    const [lx, lz] = pointAt(pts, Math.min(total, tour.d + 1.2)); // look ahead along the route
+    if (Math.hypot(lx - pl.x, lz - pl.z) > 0.05) pl.yaw = lerpAngle(pl.yaw, Math.atan2(-(lx - pl.x), -(lz - pl.z)), Math.min(1, dt * 2.5));
+    pl.pitch += (-0.12 - pl.pitch) * Math.min(1, dt * 2);
+    pl.y = pl.floorY + pl.eyeHeight;
+    if (tour.d >= total) { tour.phase = 'look'; tour.t = 0; }
+  } else if (tour.phase === 'look') { // turn to the POI, show its card, then move on
+    const p = tour.stops[tour.i];
+    pl.yaw = lerpAngle(pl.yaw, Math.atan2(-(p.x - pl.x), -(p.z - pl.z)), Math.min(1, dt * 3));
+    pl.pitch += (-0.15 - pl.pitch) * Math.min(1, dt * 3);
+    if (tour.t > 0.6 && $('poi-card').hidden) { openCard(p); }
+    if (tour.t > 3) { hide('poi-card'); tour.i++; nextStop(); }
+  } else { tour.i++; nextStop(); } // unreachable stop
+  camera.position.set(pl.x, pl.y, pl.z);
+  camera.rotation.set(pl.pitch, pl.yaw, 0, 'YXZ');
+}
+
 // ---------- frame loop ----------
 let prevT = performance.now() / 1000;
 let lastReroute = 0;
@@ -431,8 +513,8 @@ const fwd = new THREE.Vector3(), toP = new THREE.Vector3();
 function frame() {
   const t = performance.now() / 1000, dt = Math.min(t - prevT, 0.05);
   prevT = t;
-  player.update(dt);
-  if (route && t - lastReroute > 0.25) { reroute(); lastReroute = t; }
+  if (tour) tourStep(dt); else player.update(dt);
+  if (route && t - lastReroute > 0.25) { reroute(); lastReroute = t; } // keeps HUD + arrows current, tour included
   drawArrows(t);
   updateHud();
 

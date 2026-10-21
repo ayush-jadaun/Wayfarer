@@ -43,6 +43,7 @@ Open `?scene=<name>` to load a reconstructed scene from `web/public/scenes/<name
 | `/` | search | `T` | tag a POI at the crosshair |
 | `M` | big map (click it to route there) | `G` | blueprint overlay |
 | `N` | stop route | `Esc` | free the mouse |
+| `B` | edit map (paint/erase walls) | `P` | auto tour (record with Win+Alt+R) |
 
 ## Capture → twin
 
