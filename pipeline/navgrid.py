@@ -431,7 +431,7 @@ def main():
     old = out / 'scene.json'
     pois = json.loads(old.read_text()).get('pois', []) if old.exists() else []  # re-runs keep tagged POIs
     tr = scene.pop('transform')
-    scene = {'name': a.name or out.name, **scene, 'splat': {'url': url, **tr}, 'pois': pois}
+    scene = {'name': a.name or out.name, **scene, 'splat': {'url': url, 'count': int(len(v)), **tr}, 'pois': pois}
     old.write_text(json.dumps(scene, indent=1))
     save_preview(scene['rows'], out / 'grid.png')
     print(f'done -> {out / "scene.json"}')

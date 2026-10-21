@@ -12,6 +12,8 @@ Steps (each is skipped when its output already exists; --force STEP re-runs from
            SOG-compressed splat and scene.json in web/public/scenes/<name>
 """
 import argparse
+import json
+import os
 import shutil
 import struct
 import subprocess
@@ -45,7 +47,8 @@ def run(cmd):
     # resolve via PATH + PATHEXT: on Windows COLMAP ships as COLMAP.bat, which CreateProcess won't find by bare name
     exe = shutil.which(str(cmd[0])) or str(cmd[0])
     try:
-        subprocess.run([exe] + [str(c) for c in cmd[1:]], check=True)
+        subprocess.run([exe] + [str(c) for c in cmd[1:]], check=True,
+                       env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})  # nerfstudio prints emoji; cp1252 consoles crash
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         tool = Path(str(cmd[0])).stem
         sys.exit(f'\nFAILED: {tool} ({e.__class__.__name__}). {HINTS.get(tool, "")}')
@@ -97,6 +100,7 @@ def step_frames(inputs, out, fps, max_frames, max_side):
         shutil.copy(f, out / f.name)
     shutil.rmtree(raw)
     print(f'  kept {len(kept)} sharp frames of {len(frames)} (window {window})')
+    return {'framesSampled': len(frames), 'framesKept': len(kept), 'clips': len(inputs)}
 
 
 def registered_images(model):
@@ -155,6 +159,7 @@ def step_sfm(frames, ns, matching, work_root):
         sys.exit(f'\nFAILED: only {ratio:.0%} of frames registered. ' + HINTS['colmap'])
     run(['ns-process-data', 'images', '--data', frames, '--output-dir', ns, '--skip-colmap',
          '--colmap-model-path', 'colmap/sparse/0', '--num-downscales', '1'])
+    return {'framesRegistered': best_n, 'models': len(models)}
 
 
 def latest_config(outputs):
@@ -192,20 +197,30 @@ def main():
     scene_dir = ROOT / 'web' / 'public' / 'scenes' / a.name
     redo = set(STEPS[STEPS.index(a.force):]) if a.force else set()
     todo = lambda step, done: step in redo or not done
+    # capture/training stats travel with the twin (scene.json "stats"): numbers for the viewer, studio and abstract
+    stats_file = work / 'stats.json'
+    stats = json.loads(stats_file.read_text()) if stats_file.exists() else {}
+
+    def record(**kv):
+        stats.update(kv)
+        work.mkdir(parents=True, exist_ok=True)
+        stats_file.write_text(json.dumps(stats, indent=1))
 
     print('[1/5] frames')
     if todo('frames', frames.exists() and any(frames.iterdir())):
         shutil.rmtree(frames, ignore_errors=True)
-        step_frames(a.inputs, frames, a.fps, a.max_frames, a.max_side)
+        record(**step_frames(a.inputs, frames, a.fps, a.max_frames, a.max_side))
 
     print('[2/5] sfm (COLMAP)')
     if todo('sfm', (ns / 'transforms.json').exists()):
-        step_sfm(frames, ns, a.matching, a.work)
+        t = time.time()
+        record(**step_sfm(frames, ns, a.matching, a.work), sfmSeconds=round(time.time() - t))
 
     print('[3/5] train (Gaussian splatting)')
     if todo('train', any(outputs.glob('**/config.yml'))):
         shutil.rmtree(outputs, ignore_errors=True)
         iters = {'fast': 7000, 'default': 30000, 'high': 45000}[a.quality]
+        t = time.time()
         # splatfacto-big needs ~12 GB; these settings keep a multi-room scene inside 8 GB
         run(['ns-train', 'splatfacto', '--data', ns, '--output-dir', outputs, '--max-num-iterations', iters,
              '--viewer.quit-on-train-completion', 'True', '--vis', 'tensorboard',
@@ -213,17 +228,30 @@ def main():
              '--pipeline.model.use-bilateral-grid', 'True',  # per-image exposure / white balance across rooms
              '--pipeline.model.use-scale-regularization', 'True',  # fewer needle-like splats
              '--pipeline.model.camera-optimizer.mode', 'SO3xR3'])  # refine COLMAP poses during training
+        record(iterations=iters, trainSeconds=round(time.time() - t))
 
     cfg = latest_config(outputs)
-    print('[4/5] export')
+    print('[4/5] export + evaluate')
     if todo('export', (export / 'splat.ply').exists()):
         run(['ns-export', 'gaussian-splat', '--load-config', cfg, '--output-dir', export])
+        # image quality on the 10% of frames nerfstudio held out of training
+        try:
+            run(['ns-eval', '--load-config', cfg, '--output-path', work / 'metrics.json'])
+            m = json.loads((work / 'metrics.json').read_text())['results']
+            record(psnr=round(m['psnr'], 2), ssim=round(m['ssim'], 3), lpips=round(m['lpips'], 3))
+            print(f"  held-out views: PSNR {m['psnr']:.2f} dB, SSIM {m['ssim']:.3f}, LPIPS {m['lpips']:.3f}")
+        except SystemExit:
+            print('  WARNING: evaluation failed; continuing without quality metrics')
 
     print('[5/5] navgrid')
     run([sys.executable, Path(__file__).parent / 'navgrid.py', export / 'splat.ply', '--out', scene_dir,
          '--name', a.title or a.name, '--transforms', ns / 'transforms.json',
          '--dataparser', cfg.parent / 'dataparser_transforms.json', '--camera-height', a.camera_height,
          '--marker-size', a.marker_size, *(['--ceiling', a.ceiling] if a.ceiling else [])])
+    scene_file = scene_dir / 'scene.json'
+    scene = json.loads(scene_file.read_text())
+    scene['stats'] = stats
+    scene_file.write_text(json.dumps(scene, indent=1))
     print(f'\nDone. Open the viewer:  cd web && npm run dev  ->  http://localhost:5173/?scene={a.name}')
 
 

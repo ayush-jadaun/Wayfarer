@@ -79,7 +79,14 @@ async function boot() {
   pois.forEach(addPoiObject);
   wireUi();
 
-  $('status').textContent = `${pois.length} points of interest · ${(grid.w * grid.cell).toFixed(1)} × ${(grid.h * grid.cell).toFixed(1)} m`;
+  const st = data.stats ?? {};
+  $('status').textContent = [
+    `${pois.length} points of interest`,
+    `${(grid.blocked.reduce((n, b) => n + !b, 0) * grid.cell ** 2).toFixed(0)} m² walkable`,
+    data.splat?.count && `${(data.splat.count / 1e6).toFixed(2)}M splats`,
+    st.framesRegistered && `${st.framesRegistered} camera views`,
+    st.psnr && `PSNR ${st.psnr} dB on held-out views`,
+  ].filter(Boolean).join(' · ');
   $('start').disabled = false;
   renderer.setAnimationLoop(frame);
 }
