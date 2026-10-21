@@ -56,12 +56,27 @@ def write_splat(v, path, min_alpha=0.02):
     return len(v)
 
 
+def pose_transform(transforms_json, dataparser_json):
+    """(T 3x4, scale) mapping transforms.json poses into the splat frame.
+
+    nerfstudio's dataparser_transforms.json maps from the *original* data coordinates, while the poses in
+    transforms.json already have `applied_transform` baked in (an axis swap for COLMAP data), so it must
+    be undone first: T_eff = T_dataparser @ inverse(applied).
+    """
+    meta = json.loads(Path(transforms_json).read_text())
+    dp = json.loads(Path(dataparser_json).read_text())
+    T = np.vstack([np.array(dp['transform']), [0, 0, 0, 1]])
+    if 'applied_transform' in meta:
+        A = np.vstack([np.array(meta['applied_transform']), [0, 0, 0, 1]])
+        T = T @ np.linalg.inv(A)
+    return T[:3], dp['scale']
+
+
 def load_cameras(transforms_json, dataparser_json):
     """Camera centres + forward vectors in the splat's (nerfstudio dataparser) frame."""
     # capture order (frame names are sequential); COLMAP's own order is by registration, not time
     frames = sorted(json.loads(Path(transforms_json).read_text())['frames'], key=lambda f: f['file_path'])
-    dp = json.loads(Path(dataparser_json).read_text())
-    T, s = np.array(dp['transform']), dp['scale']
+    T, s = pose_transform(transforms_json, dataparser_json)
     c2w = np.array([f['transform_matrix'] for f in frames])[:, :3, :]
     pos = s * (c2w[:, :, 3] @ T[:, :3].T + T[:, 3])
     fwd = -(c2w[:, :, 2] @ T[:, :3].T)  # OpenGL camera looks down -z
@@ -181,12 +196,26 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
     log(f'  {len(P):,} solid splats after floater filtering')
 
     up = np.asarray(up, float) / np.linalg.norm(up)
+    if cameras is not None and len(cameras[0]) >= 10:
+        # a person walks at constant height: the camera path is ~horizontal, so its least-variance axis is up.
+        # Far more reliable than averaged camera orientations, which ceiling shots tilt badly.
+        cp = cameras[0] - cameras[0].mean(0)
+        evals, evecs = np.linalg.eigh(np.cov(cp.T))
+        if evals[1] > 0.05 * evals[2] and evals[0] < 0.15 * evals[1]:  # path spans an area, not just a line
+            path_up = evecs[:, 0] * np.sign(evecs[:, 0] @ up or 1)
+            log(f'  up from camera path: {math.degrees(math.acos(min(1, abs(path_up @ up)))):.0f} deg from orientation hint')
+            up = path_up
     extent = np.linalg.norm(np.quantile(P, 0.98, 0) - np.quantile(P, 0.02, 0))
     tol = extent * 0.004
     h = P @ up
     sub = lambda m: P[m][rng.choice(np.count_nonzero(m), min(40000, np.count_nonzero(m)), replace=False)]
 
-    n, c_floor, _ = ransac_plane(sub(h < np.quantile(h, 0.35)), up, rng, tol=tol)
+    low = h < np.quantile(h, 0.35)
+    if cameras is not None:  # the floor is below where the camera was held
+        below = h < np.quantile(cameras[0] @ up, 0.05)
+        if np.count_nonzero(low & below) > 500:
+            low &= below
+    n, c_floor, _ = ransac_plane(sub(low), up, rng, tol=tol)
     R = basis_from_up(n)
     hh = (P - c_floor) @ n  # raw height above floor
 
@@ -228,6 +257,11 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
     else:
         raise RuntimeError('cannot infer metric scale: pass --scale, or capture with the ceiling visible')
     log(f'  scale {s:.4f} m/unit from {src}  ' + '  '.join(f'[{k}: {e:.4f}]' for k, e in estimates.items()))
+    if cam_raw:
+        lo_h, hi_h = np.quantile(cam_h * s, [0.05, 0.95])
+        log(f'  camera height above floor: {lo_h:.2f}-{hi_h:.2f} m (5-95%)')
+        if hi_h - lo_h > 0.8:
+            log('  WARNING: camera heights vary a lot; the floor/up estimate may be wrong')
     for k, e in estimates.items():
         if abs(e / s - 1) > 0.12:
             log(f'  WARNING: {k} estimate disagrees with the chosen scale by {abs(e / s - 1):.0%}; '
@@ -269,12 +303,21 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
     obstacle = obs_n >= thr
     if carver is not None:  # rendered-depth evidence: what cameras saw through is empty, where rays end is solid
         passed, hits = carver(lambda p: s * ((p - c_floor) @ R_total.T), (x0, z0, cell, W, H), (lo, hi))
-        hz = hits[hits > 0]
-        solid = hits >= (max(3.0, 0.05 * np.quantile(hz, 0.9)) if len(hz) else np.inf)
-        # only weak (floater-like) evidence can be carved away; dense walls survive semi-transparent renders
-        seen_through = (passed >= 6) & (passed >= 4 * hits) & (obs_n < 3 * thr)
+        Z = passed.shape[2]
+        # splat evidence per voxel, same slicing as the carver
+        iy = np.clip(((A[wall, 1] - lo) / cell).astype(int), 0, Z - 1)
+        obs3 = np.bincount(flat[wall] * Z + iy, weights=alpha[wall], minlength=W * H * Z).reshape(H, W, Z)
+        # a voxel is seen through when rays crossed it at that height far more often than they stopped there;
+        # only weak (floater-like) voxels can be carved, so dense walls survive semi-transparent renders
+        oz = obs3[obs3 > 0]
+        weak = max(1.5, 0.15 * np.quantile(oz, 0.9)) if len(oz) else np.inf  # relative to dense wall voxels
+        seen3 = (passed >= 6) & (passed >= 4 * hits) & (obs3 < weak)
+        kept_n = (obs3 * ~seen3).sum(2)
+        hits2 = hits.sum(2)
+        hz = hits2[hits2 > 0]
+        solid = hits2 >= (max(3.0, 0.05 * np.quantile(hz, 0.9)) if len(hz) else np.inf)
         before = obstacle.copy()
-        obstacle = (obstacle | solid) & ~seen_through
+        obstacle = (kept_n >= thr) | (solid & obstacle) | (solid & (kept_n >= thr / 2))
         log(f'  depth carving: {np.count_nonzero(before & ~obstacle)} floater cells cleared, '
             f'{np.count_nonzero(obstacle & ~before)} surface cells added')
     obstacle = drop_small_blobs(obstacle, min_cells=max(2, round(0.03 / cell ** 2)))  # < 0.03 m^2 = floater

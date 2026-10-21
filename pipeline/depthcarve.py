@@ -12,9 +12,9 @@ import numpy as np
 
 def load_views(transforms_json, dataparser_json, max_views=160):
     """Camera intrinsics + OpenCV camera-to-world matrices in the splat (dataparser) frame."""
+    from navgrid import pose_transform
     tf = json.loads(Path(transforms_json).read_text())
-    dp = json.loads(Path(dataparser_json).read_text())
-    T, s = np.array(dp['transform']), dp['scale']
+    T, s = pose_transform(transforms_json, dataparser_json)
     frames = sorted(tf['frames'], key=lambda f: f['file_path'])
     frames = frames[::max(1, len(frames) // max_views)]
     views = []
@@ -54,14 +54,20 @@ def render_depths(v, views, K, w, h, width=192):
 
 
 def carve(v, views, K, w, h, to_metric, grid, band, step=0.05, min_alpha=0.6, margin=0.12):
-    """(pass_count, hit_count) grids. to_metric maps splat-frame points [N,3] to aligned metric (y up)."""
+    """(pass_count, hit_count) voxel grids [H, W, Z] with Z = cell-high slices of the obstacle band.
+
+    Height matters: a ray passing 1 m above a bed says nothing about the bed, so evidence is per voxel.
+    to_metric maps splat-frame points [N, 3] to aligned metric coordinates (y up, floor at 0).
+    """
     x0, z0, cell, W, H = grid
     lo, hi = band
+    Z = max(1, int(np.ceil((hi - lo) / cell)))
+    vox = lambda px, pz, py: (pz * W + px) * Z + np.clip(((py - lo) / cell).astype(int), 0, Z - 1)
     depths, alphas, Ks = render_depths(v, views, K, w, h)
     V, hh, ww = depths.shape
     ys, xs = np.mgrid[0:hh:2, 0:ww:2]  # every other pixel is plenty at 10 cm cells
     rays_cam = np.stack([(xs + 0.5 - Ks[0, 2]) / Ks[0, 0], (ys + 0.5 - Ks[1, 2]) / Ks[1, 1], np.ones_like(xs, float)], -1).reshape(-1, 3)
-    passed, hits = np.zeros(H * W), np.zeros(H * W)
+    passed, hits = np.zeros(H * W * Z), np.zeros(H * W * Z)
     for i in range(V):
         d = depths[i, ::2, ::2].reshape(-1)
         ok = (alphas[i, ::2, ::2].reshape(-1) > min_alpha) & (d > 0)
@@ -81,7 +87,7 @@ def carve(v, views, K, w, h, to_metric, grid, band, step=0.05, min_alpha=0.6, ma
         inb = (em[:, 1] > lo) & (em[:, 1] < hi)
         hx, hz = ((em[inb, 0] - x0) / cell).astype(int), ((em[inb, 2] - z0) / cell).astype(int)
         m = (hx >= 0) & (hx < W) & (hz >= 0) & (hz < H)
-        np.add.at(hits, hz[m] * W + hx[m], 1)
+        np.add.at(hits, vox(hx[m], hz[m], em[inb, 1][m]), 1)
         # free space along each ray, stopping `margin` short of the surface
         n = int(np.ceil(length.max() / step))
         t = np.arange(1, n + 1) * step
@@ -93,5 +99,5 @@ def carve(v, views, K, w, h, to_metric, grid, band, step=0.05, min_alpha=0.6, ma
             valid &= (pts[..., 1] > lo) & (pts[..., 1] < hi)
             px, pz = ((pts[..., 0] - x0) / cell).astype(int), ((pts[..., 2] - z0) / cell).astype(int)
             valid &= (px >= 0) & (px < W) & (pz >= 0) & (pz < H)
-            np.add.at(passed, (pz * W + px)[valid], 1)
-    return passed.reshape(H, W), hits.reshape(H, W)
+            np.add.at(passed, vox(px[valid], pz[valid], pts[..., 1][valid]), 1)
+    return passed.reshape(H, W, Z), hits.reshape(H, W, Z)

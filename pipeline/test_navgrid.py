@@ -76,6 +76,13 @@ cx, cz = (ox + (np.mean([c[0] for c in cells]) + 0.5) * cell, oz + (np.mean([c[1
 fwd, to_mid = np.array([-math.sin(sp['yaw']), -math.cos(sp['yaw'])]), np.array([cx - sp['x'], cz - sp['z']])
 assert fwd @ to_mid / np.linalg.norm(to_mid) > 0.95, (sp, cx, cz)
 
+# regression: orientation hint 90 deg off (ceiling shots skew averaged camera-up) -> the camera path must win
+loop = np.array([(0.8 + 4.4 * (0.5 + 0.5 * math.cos(a)), 1.4 + 0.05 * math.sin(3 * a), 2.0 + 1.2 * math.sin(a))
+                 for a in np.linspace(0, 2 * math.pi, 80)])
+wrong = build(v, (raw(loop), np.tile(np.array([1.0, 0, 0]) @ M.T, (80, 1))), up=(1, 0, 0), ceiling=H, log=lambda *_: None)
+s2 = wrong['transform']['scale'][0]
+assert abs(s2 - TRUE_SCALE) / TRUE_SCALE < 0.03, f'wrong up hint: scale {s2}'
+
 print('\n'.join(rows[::2]))
 print(f'ok: scale {s:.3f}, walkable {walk_m2:.1f} m^2, table {table_m2:.2f} m^2, wall {scene["wallHeight"]} m')
 
