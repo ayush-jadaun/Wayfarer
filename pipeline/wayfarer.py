@@ -186,6 +186,7 @@ def main():
                     help='printed ArUco marker side in metres (docs/marker.svg); gives metric scale when filmed')
     ap.add_argument('--quality', choices=['fast', 'default', 'high'], default='default',
                     help='fast = 7k-iteration preview, default = 30k, high = 45k (all fit in 8 GB VRAM)')
+    ap.add_argument('--no-autopoi', action='store_true', help='skip automatic object labelling')
     ap.add_argument('--force', choices=STEPS, help='re-run from this step onward')
     a = ap.parse_args()
 
@@ -248,6 +249,12 @@ def main():
          '--name', a.title or a.name, '--transforms', ns / 'transforms.json',
          '--dataparser', cfg.parent / 'dataparser_transforms.json', '--camera-height', a.camera_height,
          '--marker-size', a.marker_size, *(['--ceiling', a.ceiling] if a.ceiling else [])])
+    if not a.no_autopoi:  # label furniture/appliances automatically (best effort)
+        try:
+            run([sys.executable, Path(__file__).parent / 'autopoi.py', '--scene', scene_dir, '--splat', export / 'splat.ply',
+                 '--transforms', ns / 'transforms.json', '--dataparser', cfg.parent / 'dataparser_transforms.json'])
+        except SystemExit:
+            print('  WARNING: auto-labelling failed; tag POIs by hand in the viewer')
     scene_file = scene_dir / 'scene.json'
     scene = json.loads(scene_file.read_text())
     scene['stats'] = stats
