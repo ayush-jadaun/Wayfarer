@@ -64,6 +64,7 @@ async function boot() {
     scene.add(splat);
     await splat.initialized;
     setBlueprint(false); // splat is the visual; the grid stays for collision + nav
+    addSurfaces(); // floor/ceiling filled from the frames (+ generative inpainting) behind the splat's holes
   }
 
   player = new Player(camera, renderer.domElement, grid, { eyeHeight: data.eyeHeight ?? 1.6, floorY });
@@ -93,6 +94,25 @@ async function boot() {
     if (r.ok && r.headers.get('content-type')?.includes('svg')) { $('plan-link').href = `${sceneDir}floorplan.svg`; $('plan-link').hidden = false; }
   }).catch(() => {});
   renderer.setAnimationLoop(frame);
+}
+
+// ---------- floor / ceiling fill ----------
+let ceilingMesh = null;
+function addSurfaces() {
+  const loader = new THREE.TextureLoader();
+  for (const [name, sf] of Object.entries(data.surfaces ?? {})) {
+    const tex = loader.load(`${sceneDir}${sf.url}`);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(sf.width, sf.depth),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide }));
+    m.rotation.x = -Math.PI / 2; // texture rows run along +z, like the grid
+    // a hair outside the real surface so the splat's own floor/ceiling (when present) wins
+    m.position.set(sf.x0 + sf.width / 2, sf.y + (name === 'floor' ? -0.02 : 0.02), sf.z0 + sf.depth / 2);
+    m.renderOrder = -1;
+    scene.add(m);
+    if (name === 'ceiling') ceilingMesh = m;
+  }
 }
 
 // ---------- blueprint (procedural geometry from the grid) ----------
@@ -517,6 +537,7 @@ function frame() {
   const t = performance.now() / 1000, dt = Math.min(t - prevT, 0.05);
   prevT = t;
   if (tour) tourStep(dt); else player.update(dt);
+  if (ceilingMesh) ceilingMesh.visible = camera.position.y < ceilingMesh.position.y - 0.05; // dollhouse view from above
   if (route && t - lastReroute > 0.25) { reroute(); lastReroute = t; } // keeps HUD + arrows current, tour included
   drawArrows(t);
   updateHud();

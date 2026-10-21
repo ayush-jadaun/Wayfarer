@@ -21,6 +21,7 @@ Built for **Namma Space, Techfest 2026-27, IIT Bombay**.
 | **Metric, level model** | Floor found with RANSAC; scale from a printed ArUco marker (about 1%), cross-checked against the tape-measured ceiling and camera height |
 | **Walkable grid** | Obstacles sliced 0.12–1.9 m above the floor; height-aware free-space carving from rendered depth removes floaters; doorways the camera walked through always stay open |
 | **Self-labelling twin** | A COCO object detector finds beds, sofas, TVs, fridges and more in the frames and places them in 3D as searchable POIs |
+| **Floor & ceiling fill** | Real pixels projected from the frames onto the measured floor and ceiling planes (occlusion-checked), with generative AI inpainting (LaMa) for parts the camera never saw |
 | **Measured quality** | Every twin is scored on held-out views (PSNR/SSIM/LPIPS); the numbers ship with the scene |
 | **POIs + search** | Tag rooms and items at the crosshair; ranked fuzzy search; look at a POI to reveal its name |
 | **Navigation** | A* on the grid with a body-radius safety margin, line-of-sight smoothing, animated floor arrows, live re-routing and turn-by-turn hints |
@@ -69,6 +70,7 @@ pipeline/
   depthcarve.py     height-aware free-space carving from rendered splat depth
   autopoi.py        object detection -> 3D POIs
   floorplan.py      vector floor plan (SVG) from the grid, for docs and slides
+  surfaces.py       floor/ceiling fill: real pixels projected from the frames, LaMa generative inpainting for unseen parts
   train_mcmc.py     gsplat MCMC trainer (memory-capped fallback: --trainer mcmc)
   server.py         local job server behind the upload studio (stdlib only)
   test_navgrid.py   synthetic-room self-check (python pipeline/test_navgrid.py)

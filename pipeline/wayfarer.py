@@ -26,7 +26,9 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 VOCAB_URL = 'https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_flickr100K_words32K.bin'  # FLANN format, COLMAP <= 3.11
-EXHAUSTIVE_MAX = 450  # frames; exhaustive matching closes every loop and still takes minutes on a GPU at this size
+# exhaustive matching is O(n^2): 292 frames took 22 min. Beyond this, video frames are matched with their
+# neighbours (quadratic overlap) plus vocabulary-tree loop closure: O(n), same accuracy on walk-through video.
+EXHAUSTIVE_MAX = 150
 STEPS = ['frames', 'sfm', 'train', 'export', 'navgrid']
 IMAGE_EXT = {'.jpg', '.jpeg', '.png'}
 
@@ -184,9 +186,9 @@ def main():
     ap.add_argument('--work', type=Path, default=ROOT / 'work', help='scratch dir for frames, COLMAP, checkpoints')
     ap.add_argument('--ceiling', type=float, help='tape-measured floor-to-ceiling height (m) for metric scale')
     ap.add_argument('--camera-height', type=float, default=1.4, help='phone height held during capture (m)')
-    ap.add_argument('--fps', type=float, default=4, help='frames sampled per second of video before sharpness filtering')
-    ap.add_argument('--max-frames', type=int, default=400)
-    ap.add_argument('--max-side', type=int, default=1600, help='longest image side in px (VRAM / speed)')
+    ap.add_argument('--fps', type=float, default=6, help='frames sampled per second of video before sharpness filtering')
+    ap.add_argument('--max-frames', type=int, default=500, help='more views = better coverage; training time barely changes')
+    ap.add_argument('--max-side', type=int, help='longest image side in px (default: 1280, or 1600 for --quality high)')
     ap.add_argument('--matching', choices=['auto', 'exhaustive', 'sequential'], default='auto',
                     help=f'COLMAP matching: auto = exhaustive up to {EXHAUSTIVE_MAX} frames, else sequential + loop closure')
     ap.add_argument('--marker-size', type=float, default=0.15,
@@ -196,6 +198,7 @@ def main():
     ap.add_argument('--trainer', choices=['splatfacto', 'mcmc'], default='splatfacto',
                     help='splatfacto: best quality in our benchmark; mcmc: hard 1M-Gaussian cap, never runs out of VRAM')
     ap.add_argument('--no-autopoi', action='store_true', help='skip automatic object labelling')
+    ap.add_argument('--no-surfaces', action='store_true', help='skip the floor/ceiling fill')
     ap.add_argument('--force', choices=STEPS, help='re-run from this step onward')
     a = ap.parse_args()
 
@@ -219,7 +222,8 @@ def main():
     print('[1/5] frames')
     if todo('frames', frames.exists() and any(frames.iterdir())):
         shutil.rmtree(frames, ignore_errors=True)
-        record(**step_frames(a.inputs, frames, a.fps, a.max_frames, a.max_side))
+        side = a.max_side or (1600 if a.quality == 'high' else 1280)  # 1280 px trains ~1.5x faster than 1600
+        record(**step_frames(a.inputs, frames, a.fps, a.max_frames, side), maxSide=side)
 
     print('[2/5] sfm (COLMAP)')
     if todo('sfm', (ns / 'transforms.json').exists()):
@@ -236,7 +240,9 @@ def main():
         ckpts = sorted(outputs.glob('**/nerfstudio_models/step-*.ckpt'), key=lambda p: p.stat().st_mtime)
         resume = ckpts[-1].parent if ckpts and 'train' not in redo and a.trainer == 'splatfacto' else None
         if resume:
+            done_steps = int(ckpts[-1].stem.split('-')[1])
             print(f'  resuming from {ckpts[-1].name}')
+            iters = max(1000, iters - done_steps)  # nerfstudio counts --max-num-iterations from the loaded step
         else:
             shutil.rmtree(outputs, ignore_errors=True)
         t = time.time()
@@ -284,6 +290,13 @@ def main():
                  '--transforms', ns / 'transforms.json', '--dataparser', run_dir / 'dataparser_transforms.json'])
         except SystemExit:
             print('  WARNING: auto-labelling failed; tag POIs by hand in the viewer')
+    if not a.no_surfaces:  # floor/ceiling texture from the frames + generative inpainting for unseen parts
+        try:
+            run([sys.executable, Path(__file__).parent / 'surfaces.py', '--scene', scene_dir, '--splat', export / 'splat.ply',
+                 '--transforms', ns / 'transforms.json', '--dataparser', run_dir / 'dataparser_transforms.json',
+                 *(['--ceiling', a.ceiling] if a.ceiling else [])])
+        except SystemExit:
+            print('  WARNING: floor/ceiling fill failed; the twin works without it')
     scene_file = scene_dir / 'scene.json'
     scene = json.loads(scene_file.read_text())
     scene['stats'] = stats
