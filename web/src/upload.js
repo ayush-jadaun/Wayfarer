@@ -1,41 +1,74 @@
 // Wayfarer Studio: upload a capture, follow the pipeline, open the twin.
 const $ = (id) => document.getElementById(id);
 const form = $('new-job');
-let file = null;
+let files = [];
 
-function pick(f) {
-  if (!f) return;
-  file = f;
-  $('drop-title').textContent = f.name;
-  $('drop-sub').textContent = `${(f.size / 1e6).toFixed(0)} MB · ready`;
-  if (!form.title.value) form.title.value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 40);
-  $('go').disabled = false;
+function pick(list) {
+  const vids = [...list].filter((f) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|mkv|webm|avi)$/i.test(f.name));
+  files.push(...vids.filter((f) => !files.some((g) => g.name === f.name && g.size === f.size)));
+  renderClips();
 }
-$('file').addEventListener('change', (e) => pick(e.target.files[0]));
+function renderClips() {
+  $('clips').innerHTML = '';
+  files.forEach((f, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span></span><small></small><button type="button" aria-label="Remove clip">✕</button>';
+    li.firstChild.textContent = `${i + 1}. ${f.name}`;
+    li.querySelector('small').textContent = `${(f.size / 1e6).toFixed(0)} MB`;
+    li.querySelector('button').onclick = () => { files.splice(i, 1); renderClips(); };
+    $('clips').appendChild(li);
+  });
+  const total = files.reduce((s, f) => s + f.size, 0);
+  $('drop-title').textContent = files.length ? `${files.length} clip${files.length > 1 ? 's' : ''} · ${(total / 1e6).toFixed(0)} MB` : 'Drop your capture video(s) here';
+  $('drop-sub').textContent = files.length > 1 ? 'clips must overlap at doorways; they merge into one space' : 'or click to choose · MP4 / MOV · several room clips merge into one space';
+  if (files.length && !form.title.value) form.title.value = files[0].name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 40);
+  $('go').disabled = !files.length;
+}
+$('file').addEventListener('change', (e) => { pick(e.target.files); e.target.value = ''; });
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', (e) => pick([...e.dataTransfer.files].find((f) => f.type.startsWith('video/')) ?? e.dataTransfer.files[0]));
+drop.addEventListener('drop', (e) => pick(e.dataTransfer.files));
 
-form.addEventListener('submit', (e) => {
+// XHR (not fetch) for upload progress on multi-GB videos
+function uploadOne(f, done, total) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/uploads?${new URLSearchParams({ filename: f.name })}`);
+    xhr.upload.onprogress = (ev) => { $('upload-bar').firstElementChild.style.width = `${((done + ev.loaded) / total) * 100}%`; };
+    xhr.onload = () => {
+      const res = JSON.parse(xhr.responseText || '{}');
+      xhr.status === 201 ? resolve(res.upload) : reject(new Error(res.error || `upload failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(Object.assign(new Error('server unreachable'), { down: true }));
+    xhr.send(f);
+  });
+}
+
+form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!file) return;
-  const q = new URLSearchParams({ filename: file.name, title: form.title.value.trim(), ceiling: form.ceiling.value, quality: form.quality.value });
-  // XHR (not fetch) for upload progress on multi-GB videos
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', `/api/jobs?${q}`);
+  if (!files.length) return;
   $('go').disabled = true;
   $('upload-bar').hidden = false;
-  xhr.upload.onprogress = (ev) => { $('upload-bar').firstElementChild.style.width = `${(ev.loaded / ev.total) * 100}%`; };
-  xhr.onload = () => {
-    $('upload-bar').hidden = true;
-    const res = JSON.parse(xhr.responseText || '{}');
-    if (xhr.status !== 201) { alertBox(res.error || `upload failed (${xhr.status})`); $('go').disabled = false; return; }
+  try {
+    const total = files.reduce((s, f) => s + f.size, 0), ids = [];
+    let done = 0;
+    for (const f of files) { ids.push(await uploadOne(f, done, total)); done += f.size; }
+    const r = await fetch('/api/jobs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploads: ids, title: form.title.value.trim(), ceiling: form.ceiling.value, quality: form.quality.value }),
+    });
+    const res = await r.json();
+    if (r.status !== 201) throw new Error(res.error || `could not start (${r.status})`);
     try { localStorage.setItem('wayfarer:job', res.id); } catch { /* storage blocked */ }
+    files = []; renderClips();
     follow(res.id);
-  };
-  xhr.onerror = () => { $('upload-bar').hidden = true; $('go').disabled = false; $('server-down').hidden = false; };
-  xhr.send(file);
+  } catch (err) {
+    if (err.down) $('server-down').hidden = false; else alertBox(err.message);
+    $('go').disabled = false;
+  } finally {
+    $('upload-bar').hidden = true;
+  }
 });
 
 function alertBox(msg) {
@@ -84,7 +117,7 @@ async function loadScenes() {
     const li = document.createElement('li');
     li.innerHTML = '<div><div class="n"></div><small></small></div><a class="button primary">Open</a>';
     li.querySelector('.n').textContent = s.name;
-    li.querySelector('small').textContent = `${s.splat ? '3D capture' : 'blueprint'} · ${s.pois} POIs · ?scene=${s.id}`;
+    li.querySelector('small').textContent = [s.splat ? '3D capture' : 'blueprint', `${s.pois} POIs`, s.psnr && `PSNR ${s.psnr} dB`, `?scene=${s.id}`].filter(Boolean).join(' · ');
     li.querySelector('a').href = `./?scene=${encodeURIComponent(s.id)}`;
     $('scenes').appendChild(li);
   }

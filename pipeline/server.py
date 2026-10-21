@@ -2,7 +2,8 @@
 
   .venv-ns/Scripts/python.exe pipeline/server.py      (start.bat does this for you)
 
-  POST /api/jobs?filename=walk.mp4&ceiling=2.75&title=My%20Home   body = raw video bytes
+  POST /api/uploads?filename=room1.mp4                             body = raw video bytes -> {upload}
+  POST /api/jobs   {"uploads": [ids...], "title", "ceiling", "quality"}  (several clips -> one connected space)
   GET  /api/jobs/<id>                                              -> status, step, log tail
   GET  /api/scenes                                                 -> reconstructed scenes
 """
@@ -24,7 +25,8 @@ UPLOADS = ROOT / 'work' / 'uploads'
 SCENES = ROOT / 'web' / 'public' / 'scenes'
 PORT = int(os.environ.get('WAYFARER_PORT', 8765))
 STEP_RE = re.compile(r'^\[(\d)/5\] (\w+)')
-jobs = {}  # ponytail: in-memory, one machine, one user; persist to disk if jobs must survive restarts
+VIDEO_EXT = {'.mp4', '.mov', '.m4v', '.mkv', '.avi', '.webm'}
+jobs, uploads = {}, {}  # ponytail: in-memory, one machine, one user; persist to disk if jobs must survive restarts
 lock = threading.Lock()  # one GPU -> one training job at a time
 
 
@@ -55,7 +57,7 @@ def run_job(job):
     job['status'] = 'queued'
     with lock:
         job['status'] = 'running'
-        cmd = [sys.executable, str(ROOT / 'pipeline' / 'wayfarer.py'), job['video'], '--name', job['scene'], '--title', job['title']]
+        cmd = [sys.executable, str(ROOT / 'pipeline' / 'wayfarer.py'), *job['video'], '--name', job['scene'], '--title', job['title']]
         if job['ceiling']:
             cmd += ['--ceiling', str(job['ceiling'])]
         if job['quality']:
@@ -103,7 +105,7 @@ class Handler(BaseHTTPRequestHandler):
                 f = d / 'scene.json'
                 if f.exists():
                     s = json.loads(f.read_text(encoding='utf-8'))
-                    scenes.append({'id': d.name, 'name': s.get('name', d.name), 'splat': bool(s.get('splat')), 'pois': len(s.get('pois', [])),
+                    scenes.append({'id': d.name, 'name': s.get('name', d.name), 'splat': bool(s.get('splat')), 'pois': len(s.get('pois', [])), 'psnr': s.get('stats', {}).get('psnr'),
                                    'updated': f.stat().st_mtime})
             return self.send_json(scenes)
         if url.path.startswith('/api/jobs/'):
@@ -124,29 +126,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
-        if url.path != '/api/jobs':
-            return self.reject('not found', 404)
-        q = {k: v[0] for k, v in parse_qs(url.query).items()}
-        filename = q.get('filename', 'capture.mp4')
+        if url.path == '/api/uploads':
+            return self.upload(url)
+        if url.path == '/api/jobs':
+            return self.create_job()
+        self.reject('not found', 404)
+
+    def upload(self, url):
+        """One video per request (raw body); a job then references one or more uploads."""
+        filename = parse_qs(url.query).get('filename', ['capture.mp4'])[0]
         ext = Path(filename).suffix.lower()
-        if ext not in {'.mp4', '.mov', '.m4v', '.mkv', '.avi', '.webm'}:
-            return self.reject(f'unsupported file type {ext or "(none)"}')
-        try:
-            ceiling = float(q['ceiling']) if q.get('ceiling') else None
-        except ValueError:
-            return self.reject('ceiling must be a number in metres')
-        if ceiling is not None and not 1.8 <= ceiling <= 12:
-            return self.reject('ceiling should be between 1.8 and 12 m')
-        quality = q.get('quality') if q.get('quality') in ('fast', 'default', 'high') else None
+        if ext not in VIDEO_EXT:
+            return self.reject(f'unsupported file type {ext or "(none)"} in {filename}')
         size = int(self.headers.get('Content-Length', 0))
         if size <= 0:
-            return self.send_json({'error': 'empty upload'}, 400)
-
-        jid = uuid.uuid4().hex[:8]
-        title = q.get('title') or Path(filename).stem
-        scene = f'{slug(title)}-{jid[:4]}'
+            return self.reject('empty upload')
+        uid = uuid.uuid4().hex[:10]
         UPLOADS.mkdir(parents=True, exist_ok=True)
-        video = UPLOADS / f'{scene}{ext}'
+        video = UPLOADS / f'{uid}{ext}'
         with open(video, 'wb') as f:  # stream to disk: phone videos are often > 1 GB
             left = size
             while left > 0:
@@ -158,10 +155,33 @@ class Handler(BaseHTTPRequestHandler):
         if left > 0:
             video.unlink(missing_ok=True)
             return self.send_json({'error': 'upload interrupted'}, 400)
+        uploads[uid] = {'path': str(video), 'name': filename, 'sizeMB': round(size / 1e6, 1)}
+        self.send_json({'upload': uid}, 201)
 
-        job = {'id': jid, 'scene': scene, 'title': title, 'ceiling': ceiling, 'quality': quality, 'video': str(video),
+    def create_job(self):
+        try:
+            q = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
+        except ValueError:
+            return self.send_json({'error': 'body must be JSON'}, 400)
+        ids = q.get('uploads') or []
+        if not ids or any(i not in uploads for i in ids):
+            return self.send_json({'error': 'upload at least one video first'}, 400)
+        try:
+            ceiling = float(q['ceiling']) if q.get('ceiling') not in (None, '') else None
+        except (TypeError, ValueError):
+            return self.send_json({'error': 'ceiling must be a number in metres'}, 400)
+        if ceiling is not None and not 1.8 <= ceiling <= 12:
+            return self.send_json({'error': 'ceiling should be between 1.8 and 12 m'}, 400)
+        quality = q.get('quality') if q.get('quality') in ('fast', 'default', 'high') else None
+
+        jid = uuid.uuid4().hex[:8]
+        files = [uploads[i] for i in ids]
+        title = (q.get('title') or '').strip()[:40] or Path(files[0]['name']).stem
+        scene = f'{slug(title)}-{jid[:4]}'
+        job = {'id': jid, 'scene': scene, 'title': title, 'ceiling': ceiling, 'quality': quality,
+               'video': [f['path'] for f in files], 'clips': [f['name'] for f in files],
                'log': str(UPLOADS / f'{scene}.log'), 'status': 'queued', 'step': 0, 'stepName': 'upload',
-               'created': time.time(), 'sizeMB': round(size / 1e6, 1)}
+               'created': time.time(), 'sizeMB': round(sum(f['sizeMB'] for f in files), 1)}
         jobs[jid] = job
         threading.Thread(target=run_job, args=(job,), daemon=True).start()
         self.send_json({'id': jid, 'scene': scene}, 201)

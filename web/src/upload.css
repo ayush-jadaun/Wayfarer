@@ -17,6 +17,11 @@ body.studio { overflow: auto; }
 }
 #drop:hover, #drop.over { border-color: var(--accent); background: rgba(255, 138, 61, 0.06); }
 #drop span { color: var(--muted); font-size: 0.9em; }
+#clips { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#clips:empty { display: none; }
+#clips li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #0a1422; border-radius: 8px; font-size: 0.9em; }
+#clips li small { color: var(--muted); margin-left: auto; }
+#clips li button { padding: 2px 8px; }
 .fields { display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 10px; }
 .fields label { display: grid; gap: 4px; color: var(--muted); font-size: 0.85em; }
 @media (max-width: 600px) { .fields { grid-template-columns: 1fr; } }
