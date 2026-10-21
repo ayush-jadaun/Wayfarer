@@ -189,6 +189,8 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
     P = np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64)
     alpha = sigmoid(v['opacity']) if 'opacity' in v.dtype.names else np.ones(len(P))
     keep = alpha > 0.3
+    if keep.mean() < 0.25:  # MCMC-style models keep many semi-transparent splats; opacity still weights the counts
+        keep = alpha > 0.05
     if 'scale_0' in v.dtype.names:
         size = np.exp(np.max(np.stack([v['scale_0'], v['scale_1'], v['scale_2']], 1), 1))
         keep &= size <= np.quantile(size, 0.98)
@@ -416,8 +418,14 @@ def to_sog(ply, out):
     cli = Path(__file__).resolve().parent.parent / 'web' / 'node_modules' / '@playcanvas' / 'splat-transform' / 'bin' / 'cli.mjs'
     if not cli.exists() or not shutil.which('node'):
         return False
-    r = subprocess.run(['node', str(cli), '-w', '--no-tty', '-q', str(ply), '-N', '-F', str(out)])
-    return r.returncode == 0 and out.exists()
+    for gpu in ([], ['-g', 'cpu']):  # WebGPU first; if it hangs or fails, retry on the CPU
+        try:
+            r = subprocess.run(['node', str(cli), '-w', '--no-tty', '-q', *gpu, str(ply), '-N', '-F', str(out)], timeout=600)
+            if r.returncode == 0 and out.exists():
+                return True
+        except subprocess.TimeoutExpired:
+            print(f'  splat-transform timed out ({"cpu" if gpu else "gpu"})')
+    return False
 
 
 def dist_from_blocked(free):

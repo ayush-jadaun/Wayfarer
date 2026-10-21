@@ -186,6 +186,8 @@ def main():
                     help='printed ArUco marker side in metres (docs/marker.svg); gives metric scale when filmed')
     ap.add_argument('--quality', choices=['fast', 'default', 'high'], default='default',
                     help='fast = 7k-iteration preview, default = 30k, high = 45k (all fit in 8 GB VRAM)')
+    ap.add_argument('--trainer', choices=['splatfacto', 'mcmc'], default='splatfacto',
+                    help='splatfacto: best quality in our benchmark; mcmc: hard 1M-Gaussian cap, never runs out of VRAM')
     ap.add_argument('--no-autopoi', action='store_true', help='skip automatic object labelling')
     ap.add_argument('--force', choices=STEPS, help='re-run from this step onward')
     a = ap.parse_args()
@@ -218,41 +220,51 @@ def main():
         record(**step_sfm(frames, ns, a.matching, a.work), sfmSeconds=round(time.time() - t))
 
     print('[3/5] train (Gaussian splatting)')
-    if todo('train', any(outputs.glob('**/config.yml'))):
+    mcmc_dir = outputs / 'mcmc'
+    trained = (mcmc_dir / 'splat.ply').exists() if a.trainer == 'mcmc' else any(outputs.glob('**/config.yml'))
+    if todo('train', trained):
         shutil.rmtree(outputs, ignore_errors=True)
         iters = {'fast': 7000, 'default': 30000, 'high': 45000}[a.quality]
         t = time.time()
-        # splatfacto-big needs ~12 GB; these settings keep a multi-room scene inside 8 GB
-        run(['ns-train', 'splatfacto', '--data', ns, '--output-dir', outputs, '--max-num-iterations', iters,
-             '--viewer.quit-on-train-completion', 'True', '--vis', 'tensorboard',
-             '--pipeline.datamanager.cache-images', 'cpu', '--pipeline.datamanager.cache-images-type', 'uint8',
-             '--pipeline.model.use-bilateral-grid', 'True',  # per-image exposure / white balance across rooms
-             '--pipeline.model.use-scale-regularization', 'True',  # fewer needle-like splats
-             '--pipeline.model.camera-optimizer.mode', 'SO3xR3'])  # refine COLMAP poses during training
-        record(iterations=iters, trainSeconds=round(time.time() - t))
+        if a.trainer == 'mcmc':  # hard Gaussian cap: cannot run out of VRAM on very large venues
+            run([sys.executable, Path(__file__).parent / 'train_mcmc.py', '--data', ns, '--out', mcmc_dir, '--steps', iters])
+        else:  # splatfacto-big needs ~12 GB; these settings keep a multi-room scene inside 8 GB
+            run(['ns-train', 'splatfacto', '--data', ns, '--output-dir', outputs, '--max-num-iterations', iters,
+                 '--viewer.quit-on-train-completion', 'True', '--vis', 'tensorboard',
+                 '--pipeline.datamanager.cache-images', 'cpu', '--pipeline.datamanager.cache-images-type', 'uint8',
+                 '--pipeline.model.use-bilateral-grid', 'True',  # per-image exposure / white balance across rooms
+                 '--pipeline.model.use-scale-regularization', 'True',  # fewer needle-like splats
+                 '--pipeline.model.camera-optimizer.mode', 'SO3xR3'])  # refine COLMAP poses during training
+        record(iterations=iters, trainSeconds=round(time.time() - t), trainer=a.trainer)
 
-    cfg = latest_config(outputs)
+    run_dir = mcmc_dir if a.trainer == 'mcmc' else latest_config(outputs).parent  # holds dataparser_transforms.json
     print('[4/5] export + evaluate')
     if todo('export', (export / 'splat.ply').exists()):
-        run(['ns-export', 'gaussian-splat', '--load-config', cfg, '--output-dir', export])
-        # image quality on the 10% of frames nerfstudio held out of training
-        try:
-            run(['ns-eval', '--load-config', cfg, '--output-path', work / 'metrics.json'])
+        export.mkdir(parents=True, exist_ok=True)
+        if a.trainer == 'mcmc':  # the trainer already wrote the PLY and held-out metrics
+            shutil.copy(mcmc_dir / 'splat.ply', export / 'splat.ply')
+            shutil.copy(mcmc_dir / 'metrics.json', work / 'metrics.json')
+        else:
+            run(['ns-export', 'gaussian-splat', '--load-config', run_dir / 'config.yml', '--output-dir', export])
+            try:  # image quality on the 10% of frames nerfstudio held out of training
+                run(['ns-eval', '--load-config', run_dir / 'config.yml', '--output-path', work / 'metrics.json'])
+            except SystemExit:
+                print('  WARNING: evaluation failed; continuing without quality metrics')
+        if (work / 'metrics.json').exists():
             m = json.loads((work / 'metrics.json').read_text())['results']
-            record(psnr=round(m['psnr'], 2), ssim=round(m['ssim'], 3), lpips=round(m['lpips'], 3))
-            print(f"  held-out views: PSNR {m['psnr']:.2f} dB, SSIM {m['ssim']:.3f}, LPIPS {m['lpips']:.3f}")
-        except SystemExit:
-            print('  WARNING: evaluation failed; continuing without quality metrics')
+            if m:
+                record(**{k: round(m[k], 3 if k != 'psnr' else 2) for k in ('psnr', 'ssim', 'lpips') if k in m})
+                print('  held-out views: ' + ', '.join(f'{k.upper()} {m[k]:.3f}' for k in ('psnr', 'ssim', 'lpips') if k in m))
 
     print('[5/5] navgrid')
     run([sys.executable, Path(__file__).parent / 'navgrid.py', export / 'splat.ply', '--out', scene_dir,
          '--name', a.title or a.name, '--transforms', ns / 'transforms.json',
-         '--dataparser', cfg.parent / 'dataparser_transforms.json', '--camera-height', a.camera_height,
+         '--dataparser', run_dir / 'dataparser_transforms.json', '--camera-height', a.camera_height,
          '--marker-size', a.marker_size, *(['--ceiling', a.ceiling] if a.ceiling else [])])
     if not a.no_autopoi:  # label furniture/appliances automatically (best effort)
         try:
             run([sys.executable, Path(__file__).parent / 'autopoi.py', '--scene', scene_dir, '--splat', export / 'splat.ply',
-                 '--transforms', ns / 'transforms.json', '--dataparser', cfg.parent / 'dataparser_transforms.json'])
+                 '--transforms', ns / 'transforms.json', '--dataparser', run_dir / 'dataparser_transforms.json'])
         except SystemExit:
             print('  WARNING: auto-labelling failed; tag POIs by hand in the viewer')
     scene_file = scene_dir / 'scene.json'
