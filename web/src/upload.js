@@ -56,7 +56,7 @@ form.addEventListener('submit', async (e) => {
     for (const f of files) { ids.push(await uploadOne(f, done, total)); done += f.size; }
     const r = await fetch('/api/jobs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uploads: ids, title: form.title.value.trim(), ceiling: form.ceiling.value, quality: form.quality.value }),
+      body: JSON.stringify({ uploads: ids, title: form.title.value.trim(), ceiling: form.ceiling.value, quality: form.quality.value, aiRepair: form.airepair.checked, maskPeople: form.maskpeople.checked }),
     });
     const res = await r.json();
     if (r.status !== 201) throw new Error(res.error || `could not start (${r.status})`);

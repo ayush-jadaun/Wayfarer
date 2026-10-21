@@ -122,7 +122,7 @@ def vocab_tree(work_root):
     return path
 
 
-def step_sfm(frames, ns, matching, work_root):
+def step_sfm(frames, ns, matching, work_root, mask_dir=None):
     """COLMAP run directly: nerfstudio's wrapper disables loop detection and only ever reads sparse/0."""
     cm = ns / 'colmap'
     db = cm / 'database.db'
@@ -133,7 +133,8 @@ def step_sfm(frames, ns, matching, work_root):
         cm.mkdir(parents=True)
         run(['colmap', 'feature_extractor', '--database_path', db, '--image_path', frames,
              '--ImageReader.single_camera', '1', '--ImageReader.camera_model', 'OPENCV',
-             '--SiftExtraction.use_gpu', '1', '--SiftExtraction.max_num_features', '8192'])
+             '--SiftExtraction.use_gpu', '1', '--SiftExtraction.max_num_features', '8192',
+             *(['--ImageReader.mask_path', mask_dir] if mask_dir else [])])  # no features on moving people
         if matching == 'auto':
             matching = 'exhaustive' if n_frames <= EXHAUSTIVE_MAX else 'sequential'
         print(f'  matching: {matching} ({n_frames} frames)', flush=True)
@@ -168,6 +169,9 @@ def step_sfm(frames, ns, matching, work_root):
         sys.exit(f'\nFAILED: only {ratio:.0%} of frames registered. ' + HINTS['colmap'])
     run(['ns-process-data', 'images', '--data', frames, '--output-dir', ns, '--skip-colmap',
          '--colmap-model-path', 'colmap/sparse/0', '--num-downscales', '1'])
+    if mask_dir:  # training ignores masked pixels; other frames supply the real background
+        from masks import attach_to_dataset
+        attach_to_dataset(ns, frames, mask_dir)
     return {'framesRegistered': best_n, 'models': len(models)}
 
 
@@ -199,6 +203,10 @@ def main():
                     help='splatfacto: best quality in our benchmark; mcmc: hard 1M-Gaussian cap, never runs out of VRAM')
     ap.add_argument('--no-autopoi', action='store_true', help='skip automatic object labelling')
     ap.add_argument('--no-surfaces', action='store_true', help='skip the floor/ceiling fill')
+    ap.add_argument('--mask-people', action='store_true',
+                    help='mask out people/pets (busy venues); off by default: posters and piles of clothes can look like people')
+    ap.add_argument('--ai-repair', action='store_true',
+                    help='repair views the capture missed with NVIDIA Difix and fine-tune the splat (~+30 min, 3 GB VRAM)')
     ap.add_argument('--force', choices=STEPS, help='re-run from this step onward')
     a = ap.parse_args()
 
@@ -227,8 +235,16 @@ def main():
 
     print('[2/5] sfm (COLMAP)')
     if todo('sfm', (ns / 'transforms.json').exists()):
+        mask_dir = None
+        if a.mask_people:  # people walking through a busy venue would become ghosts in the twin
+            from masks import mask_frames
+            shutil.rmtree(work / 'masks', ignore_errors=True)
+            n = mask_frames(frames, work / 'masks')
+            print(f'  people/pets masked out in {n} frames' if n else '  no people in the frames')
+            record(framesWithPeople=n)
+            mask_dir = work / 'masks' if n else None
         t = time.time()
-        record(**step_sfm(frames, ns, a.matching, a.work), sfmSeconds=round(time.time() - t))
+        record(**step_sfm(frames, ns, a.matching, a.work, mask_dir), sfmSeconds=round(time.time() - t))
 
     print('[3/5] train (Gaussian splatting)')
     mcmc_dir = outputs / 'mcmc'
@@ -280,19 +296,32 @@ def main():
                 print('  held-out views: ' + ', '.join(f'{k.upper()} {m[k]:.3f}' for k in ('psnr', 'ssim', 'lpips') if k in m))
 
     print('[5/5] navgrid')
-    run([sys.executable, Path(__file__).parent / 'navgrid.py', export / 'splat.ply', '--out', scene_dir,
-         '--name', a.title or a.name, '--transforms', ns / 'transforms.json',
-         '--dataparser', run_dir / 'dataparser_transforms.json', '--camera-height', a.camera_height,
-         '--marker-size', a.marker_size, *(['--ceiling', a.ceiling] if a.ceiling else [])])
+    navgrid = lambda ply: run([sys.executable, Path(__file__).parent / 'navgrid.py', ply, '--out', scene_dir,
+                               '--name', a.title or a.name, '--transforms', ns / 'transforms.json',
+                               '--dataparser', run_dir / 'dataparser_transforms.json', '--camera-height', a.camera_height,
+                               '--marker-size', a.marker_size, *(['--ceiling', a.ceiling] if a.ceiling else [])])
+    navgrid(export / 'splat.ply')
+    if a.ai_repair:  # Difix repairs views the capture missed; the fine-tuned splat replaces the original
+        repaired = work / 'airepair' / 'splat.ply'
+        if not repaired.exists() or redo:
+            try:
+                run([sys.executable, Path(__file__).parent / 'airepair.py', '--data', ns, '--run', run_dir,
+                     '--splat', export / 'splat.ply', '--scene', scene_dir, '--out', work / 'airepair'])
+            except SystemExit:
+                print('  WARNING: AI repair failed; keeping the original splat')
+        if repaired.exists():
+            record(aiRepair=True)
+            navgrid(repaired)  # same frame as the original, so the grid and transforms stay valid
+    splat_ply = work / 'airepair' / 'splat.ply' if a.ai_repair and (work / 'airepair' / 'splat.ply').exists() else export / 'splat.ply'
     if not a.no_autopoi:  # label furniture/appliances automatically (best effort)
         try:
-            run([sys.executable, Path(__file__).parent / 'autopoi.py', '--scene', scene_dir, '--splat', export / 'splat.ply',
+            run([sys.executable, Path(__file__).parent / 'autopoi.py', '--scene', scene_dir, '--splat', splat_ply,
                  '--transforms', ns / 'transforms.json', '--dataparser', run_dir / 'dataparser_transforms.json'])
         except SystemExit:
             print('  WARNING: auto-labelling failed; tag POIs by hand in the viewer')
     if not a.no_surfaces:  # floor/ceiling texture from the frames + generative inpainting for unseen parts
         try:
-            run([sys.executable, Path(__file__).parent / 'surfaces.py', '--scene', scene_dir, '--splat', export / 'splat.ply',
+            run([sys.executable, Path(__file__).parent / 'surfaces.py', '--scene', scene_dir, '--splat', splat_ply,
                  '--transforms', ns / 'transforms.json', '--dataparser', run_dir / 'dataparser_transforms.json',
                  *(['--ceiling', a.ceiling] if a.ceiling else [])])
         except SystemExit:

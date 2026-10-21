@@ -24,6 +24,8 @@ body.studio { overflow: auto; }
 #clips li button { padding: 2px 8px; }
 .fields { display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 10px; }
 .fields label { display: grid; gap: 4px; color: var(--muted); font-size: 0.85em; }
+.fields label.check { display: flex; align-items: center; gap: 8px; grid-column: 1 / -1; color: var(--text); }
+.fields label.check input { width: auto; }
 @media (max-width: 600px) { .fields { grid-template-columns: 1fr; } }
 .bar { height: 6px; background: #0a1422; border-radius: 3px; overflow: hidden; }
 .bar[hidden] { display: none; }

@@ -62,6 +62,10 @@ def run_job(job):
             cmd += ['--ceiling', str(job['ceiling'])]
         if job['quality']:
             cmd += ['--quality', job['quality']]
+        if job.get('aiRepair'):
+            cmd += ['--ai-repair']
+        if job.get('maskPeople'):
+            cmd += ['--mask-people']
         log = open(job['log'], 'w', encoding='utf-8', errors='replace')
         p = subprocess.Popen(cmd, cwd=ROOT, env=pipeline_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, encoding='utf-8', errors='replace', bufsize=1)
@@ -178,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
         files = [uploads[i] for i in ids]
         title = (q.get('title') or '').strip()[:40] or Path(files[0]['name']).stem
         scene = f'{slug(title)}-{jid[:4]}'
-        job = {'id': jid, 'scene': scene, 'title': title, 'ceiling': ceiling, 'quality': quality,
+        job = {'id': jid, 'scene': scene, 'title': title, 'ceiling': ceiling, 'quality': quality, 'aiRepair': bool(q.get('aiRepair')), 'maskPeople': bool(q.get('maskPeople')),
                'video': [f['path'] for f in files], 'clips': [f['name'] for f in files],
                'log': str(UPLOADS / f'{scene}.log'), 'status': 'queued', 'step': 0, 'stepName': 'upload',
                'created': time.time(), 'sizeMB': round(sum(f['sizeMB'] for f in files), 1)}

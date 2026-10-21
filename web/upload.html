@@ -36,6 +36,12 @@
             <option value="high">High (~60 min, more VRAM)</option>
           </select>
         </label>
+        <label class="check" title="NVIDIA Difix repairs angles the camera missed, then the 3D is fine-tuned on the repaired views (~+30 min)">
+          <input type="checkbox" name="airepair" /> AI repair of unseen angles
+        </label>
+        <label class="check" title="Mask out people walking through the capture so they don't become ghosts (busy venues)">
+          <input type="checkbox" name="maskpeople" /> Remove people (busy venue)
+        </label>
       </div>
       <button class="primary" type="submit" id="go" disabled>Build twin</button>
       <div id="upload-bar" class="bar" hidden><div></div></div>
