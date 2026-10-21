@@ -89,6 +89,9 @@ async function boot() {
     st.psnr && `PSNR ${st.psnr} dB on held-out views`,
   ].filter(Boolean).join(' · ');
   $('start').disabled = false;
+  fetch(`${sceneDir}floorplan.svg`, { method: 'HEAD' }).then((r) => {
+    if (r.ok && r.headers.get('content-type')?.includes('svg')) { $('plan-link').href = `${sceneDir}floorplan.svg`; $('plan-link').hidden = false; }
+  }).catch(() => {});
   renderer.setAnimationLoop(frame);
 }
 

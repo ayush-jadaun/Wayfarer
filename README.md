@@ -68,6 +68,7 @@ pipeline/
   marker_scale.py   metric scale from a printed ArUco marker (triangulated from the COLMAP poses)
   depthcarve.py     height-aware free-space carving from rendered splat depth
   autopoi.py        object detection -> 3D POIs
+  floorplan.py      vector floor plan (SVG) from the grid, for docs and slides
   train_mcmc.py     gsplat MCMC trainer (memory-capped fallback: --trainer mcmc)
   server.py         local job server behind the upload studio (stdlib only)
   test_navgrid.py   synthetic-room self-check (python pipeline/test_navgrid.py)

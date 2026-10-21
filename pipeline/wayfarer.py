@@ -271,6 +271,7 @@ def main():
     scene = json.loads(scene_file.read_text())
     scene['stats'] = stats
     scene_file.write_text(json.dumps(scene, indent=1))
+    run([sys.executable, Path(__file__).parent / 'floorplan.py', scene_dir])
     print(f'\nDone. Open the viewer:  cd web && npm run dev  ->  http://localhost:5173/?scene={a.name}')
 
 
