@@ -123,22 +123,29 @@ def vocab_tree(work_root):
 def step_sfm(frames, ns, matching, work_root):
     """COLMAP run directly: nerfstudio's wrapper disables loop detection and only ever reads sparse/0."""
     cm = ns / 'colmap'
-    shutil.rmtree(ns, ignore_errors=True)
-    (cm / 'sparse').mkdir(parents=True)
     db = cm / 'database.db'
+    matched = cm / 'matched.ok'  # features + matches are the slow part: reuse them if a run was interrupted
     n_frames = sum(1 for _ in frames.iterdir())
-    run(['colmap', 'feature_extractor', '--database_path', db, '--image_path', frames,
-         '--ImageReader.single_camera', '1', '--ImageReader.camera_model', 'OPENCV',
-         '--SiftExtraction.use_gpu', '1', '--SiftExtraction.max_num_features', '8192'])
-    if matching == 'auto':
-        matching = 'exhaustive' if n_frames <= EXHAUSTIVE_MAX else 'sequential'
-    print(f'  matching: {matching} ({n_frames} frames)', flush=True)
-    if matching == 'exhaustive':
-        run(['colmap', 'exhaustive_matcher', '--database_path', db, '--SiftMatching.use_gpu', '1'])
+    if not matched.exists():
+        shutil.rmtree(ns, ignore_errors=True)
+        cm.mkdir(parents=True)
+        run(['colmap', 'feature_extractor', '--database_path', db, '--image_path', frames,
+             '--ImageReader.single_camera', '1', '--ImageReader.camera_model', 'OPENCV',
+             '--SiftExtraction.use_gpu', '1', '--SiftExtraction.max_num_features', '8192'])
+        if matching == 'auto':
+            matching = 'exhaustive' if n_frames <= EXHAUSTIVE_MAX else 'sequential'
+        print(f'  matching: {matching} ({n_frames} frames)', flush=True)
+        if matching == 'exhaustive':
+            run(['colmap', 'exhaustive_matcher', '--database_path', db, '--SiftMatching.use_gpu', '1'])
+        else:
+            run(['colmap', 'sequential_matcher', '--database_path', db, '--SiftMatching.use_gpu', '1',
+                 '--SequentialMatching.overlap', '20', '--SequentialMatching.quadratic_overlap', '1',
+                 '--SequentialMatching.loop_detection', '1', '--SequentialMatching.vocab_tree_path', vocab_tree(work_root)])
+        matched.touch()
     else:
-        run(['colmap', 'sequential_matcher', '--database_path', db, '--SiftMatching.use_gpu', '1',
-             '--SequentialMatching.overlap', '20', '--SequentialMatching.quadratic_overlap', '1',
-             '--SequentialMatching.loop_detection', '1', '--SequentialMatching.vocab_tree_path', vocab_tree(work_root)])
+        print('  reusing features and matches from the interrupted run')
+    shutil.rmtree(cm / 'sparse', ignore_errors=True)
+    (cm / 'sparse').mkdir()
     run(['colmap', 'mapper', '--database_path', db, '--image_path', frames, '--output_path', cm / 'sparse'])
 
     models = sorted((registered_images(m), m) for m in (cm / 'sparse').iterdir() if (m / 'images.bin').exists())
@@ -221,21 +228,31 @@ def main():
 
     print('[3/5] train (Gaussian splatting)')
     mcmc_dir = outputs / 'mcmc'
-    trained = (mcmc_dir / 'splat.ply').exists() if a.trainer == 'mcmc' else any(outputs.glob('**/config.yml'))
+    done_flag = outputs / 'train.ok'  # config.yml appears when training *starts*, so it can't mean "done"
+    trained = (mcmc_dir / 'splat.ply').exists() if a.trainer == 'mcmc' else done_flag.exists()
     if todo('train', trained):
-        shutil.rmtree(outputs, ignore_errors=True)
         iters = {'fast': 7000, 'default': 30000, 'high': 45000}[a.quality]
+        # an interrupted splatfacto run resumes from its last checkpoint instead of starting over
+        ckpts = sorted(outputs.glob('**/nerfstudio_models/step-*.ckpt'), key=lambda p: p.stat().st_mtime)
+        resume = ckpts[-1].parent if ckpts and 'train' not in redo and a.trainer == 'splatfacto' else None
+        if resume:
+            print(f'  resuming from {ckpts[-1].name}')
+        else:
+            shutil.rmtree(outputs, ignore_errors=True)
         t = time.time()
         if a.trainer == 'mcmc':  # hard Gaussian cap: cannot run out of VRAM on very large venues
             run([sys.executable, Path(__file__).parent / 'train_mcmc.py', '--data', ns, '--out', mcmc_dir, '--steps', iters])
         else:  # splatfacto-big needs ~12 GB; these settings keep a multi-room scene inside 8 GB
             run(['ns-train', 'splatfacto', '--data', ns, '--output-dir', outputs, '--max-num-iterations', iters,
+                 *(['--load-dir', resume] if resume else []),
                  '--viewer.quit-on-train-completion', 'True', '--vis', 'tensorboard',
                  '--pipeline.datamanager.cache-images', 'cpu', '--pipeline.datamanager.cache-images-type', 'uint8',
                  '--pipeline.model.use-bilateral-grid', 'True',  # per-image exposure / white balance across rooms
                  '--pipeline.model.use-scale-regularization', 'True',  # fewer needle-like splats
                  '--pipeline.model.camera-optimizer.mode', 'SO3xR3'])  # refine COLMAP poses during training
-        record(iterations=iters, trainSeconds=round(time.time() - t), trainer=a.trainer)
+        done_flag.touch()
+        record(iterations=iters, trainSeconds=round(time.time() - t) + (stats.get('trainSeconds', 0) if resume else 0),
+               trainer=a.trainer)
 
     run_dir = mcmc_dir if a.trainer == 'mcmc' else latest_config(outputs).parent  # holds dataparser_transforms.json
     print('[4/5] export + evaluate')
