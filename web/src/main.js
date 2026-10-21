@@ -123,11 +123,23 @@ function setBlueprint(on) { blueprint.visible = on; }
 
 // ---------- POIs ----------
 const storeKey = `wayfarer:pois:${sceneName}`;
+// The browser keeps only this viewer's edits on top of scene.json, so re-running the pipeline
+// (new auto-labels, fixed positions) still shows up for people who opened the scene before.
+const baseIds = () => new Set((data.pois ?? []).map((p) => p.id));
 function loadPois() {
-  try { const s = localStorage.getItem(storeKey); if (s) return JSON.parse(s); } catch { /* storage blocked */ }
-  return structuredClone(data.pois ?? []);
+  let edits = { added: [], deleted: [] };
+  try {
+    const s = JSON.parse(localStorage.getItem(storeKey) || 'null');
+    if (s && !Array.isArray(s)) edits = s; // older versions stored a full array: ignore it
+  } catch { /* storage blocked */ }
+  const del = new Set(edits.deleted);
+  return [...structuredClone(data.pois ?? []).filter((p) => !del.has(p.id)), ...edits.added];
 }
-function savePois() { try { localStorage.setItem(storeKey, JSON.stringify(pois)); } catch { /* storage blocked */ } }
+function savePois() {
+  const base = baseIds(), now = new Set(pois.map((p) => p.id));
+  const edits = { added: pois.filter((p) => !base.has(p.id)), deleted: [...base].filter((id) => !now.has(id)) };
+  try { localStorage.setItem(storeKey, JSON.stringify(edits)); } catch { /* storage blocked */ }
+}
 
 function addPoiObject(p) {
   const el = document.createElement('div');
