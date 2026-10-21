@@ -19,7 +19,9 @@ Built for **Namma Space, Techfest 2026-27, IIT Bombay**.
 | **First-person roaming** | WASD + mouse look, run, collision with real walls and furniture, fly mode for a dollhouse view |
 | **Robust camera poses** | COLMAP run directly with GPU SIFT and exhaustive matching (sequential + loop closure for long captures); the largest model is kept and registration is gated |
 | **Metric, level model** | Floor found with RANSAC; scale from a printed ArUco marker (about 1%), cross-checked against the tape-measured ceiling and camera height |
-| **Walkable grid** | Obstacles sliced 0.12–1.9 m above the floor, cleaned up with the camera's own walk path |
+| **Walkable grid** | Obstacles sliced 0.12–1.9 m above the floor; height-aware free-space carving from rendered depth removes floaters; doorways the camera walked through always stay open |
+| **Self-labelling twin** | A COCO object detector finds beds, sofas, TVs, fridges and more in the frames and places them in 3D as searchable POIs |
+| **Measured quality** | Every twin is scored on held-out views (PSNR/SSIM/LPIPS); the numbers ship with the scene |
 | **POIs + search** | Tag rooms and items at the crosshair; ranked fuzzy search; look at a POI to reveal its name |
 | **Navigation** | A* on the grid with a body-radius safety margin, line-of-sight smoothing, animated floor arrows, live re-routing and turn-by-turn hints |
 | **Fast web viewer** | [Spark](https://sparkjs.dev) renderer with level-of-detail (fixed splat budget per frame) and SOG compression: about 11x smaller than PLY, with full view-dependent colour |
@@ -46,7 +48,7 @@ Open `?scene=<name>` to load a reconstructed scene from `web/public/scenes/<name
 
 1. Film the space following the **[capture SOP](docs/SOP.md)**.
 2. Install the pipeline once: **[docs/SETUP.md](docs/SETUP.md)**.
-3. Double-click **`start.bat`**, drop the video into **Wayfarer Studio**, and press *Build twin*. You'll see live progress through each step, then an *Open twin* button.
+3. Double-click **`start.bat`**, drop the video (or several overlapping room clips) into **Wayfarer Studio**, and press *Build twin*. You'll see live progress through each step, then an *Open twin* button.
 
 Or from the command line:
 
@@ -63,6 +65,9 @@ pipeline/
   wayfarer.py       one-command orchestrator (frames → sfm → train → export → navgrid)
   navgrid.py        splat → floor-aligned metric occupancy grid + SOG + scene.json
   marker_scale.py   metric scale from a printed ArUco marker (triangulated from the COLMAP poses)
+  depthcarve.py     height-aware free-space carving from rendered splat depth
+  autopoi.py        object detection -> 3D POIs
+  train_mcmc.py     gsplat MCMC trainer (memory-capped fallback: --trainer mcmc)
   server.py         local job server behind the upload studio (stdlib only)
   test_navgrid.py   synthetic-room self-check (python pipeline/test_navgrid.py)
   test_marker_scale.py  rendered-marker self-check
