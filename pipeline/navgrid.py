@@ -80,7 +80,8 @@ def load_cameras(transforms_json, dataparser_json):
     c2w = np.array([f['transform_matrix'] for f in frames])[:, :3, :]
     pos = s * (c2w[:, :, 3] @ T[:, :3].T + T[:, 3])
     fwd = -(c2w[:, :, 2] @ T[:, :3].T)  # OpenGL camera looks down -z
-    return pos, fwd
+    cam_up = c2w[:, :, 1] @ T[:, :3].T  # image-up direction of each frame
+    return pos, fwd, cam_up
 
 
 # ---------------------------------------------------------------- geometry
@@ -198,7 +199,22 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
     log(f'  {len(P):,} solid splats after floater filtering')
 
     up = np.asarray(up, float) / np.linalg.norm(up)
-    if cameras is not None and len(cameras[0]) >= 10:
+    max_tilt = 25
+    gravity = None
+    if cameras is not None and len(cameras) > 2 and len(cameras[0]) >= 10:
+        # phones are held upright: when the frames' image-up directions agree, they ARE gravity.
+        # Trust them for orientation and let the points only decide the floor height (footage that barely
+        # shows the floor otherwise lets RANSAC lock onto a sloped plane of junk).
+        cu = cameras[2] / np.linalg.norm(cameras[2], axis=1, keepdims=True)
+        g = np.median(cu, 0)
+        g /= np.linalg.norm(g)
+        spread = np.degrees(np.arccos(np.clip(cu @ g, -1, 1)))
+        if np.quantile(spread, 0.8) < 15:
+            gravity = g
+            log(f'  up from camera orientation (80% of frames within {np.quantile(spread, 0.8):.0f} deg)')
+    if gravity is not None:
+        up, max_tilt = gravity, 4
+    elif cameras is not None and len(cameras[0]) >= 10:
         # a person walks at constant height: the camera path is ~horizontal, so its least-variance axis is up.
         # Far more reliable than averaged camera orientations, which ceiling shots tilt badly.
         cp = cameras[0] - cameras[0].mean(0)
@@ -217,7 +233,7 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
         below = h < np.quantile(cameras[0] @ up, 0.05)
         if np.count_nonzero(low & below) > 500:
             low &= below
-    n, c_floor, _ = ransac_plane(sub(low), up, rng, tol=tol)
+    n, c_floor, _ = ransac_plane(sub(low), up, rng, max_tilt=max_tilt, tol=tol)
     R = basis_from_up(n)
     hh = (P - c_floor) @ n  # raw height above floor
 
