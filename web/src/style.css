@@ -68,6 +68,12 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--cyan)
   position: fixed; right: 12px; bottom: 12px; width: 240px; height: 180px; background: var(--panel);
   border: 1px solid var(--line); border-radius: 10px; cursor: crosshair; transition: width 0.2s, height 0.2s;
 }
+#minimap.editing { cursor: cell; border-color: var(--accent); }
+#edit-hint {
+  position: fixed; left: 50%; bottom: calc(min(70vh, 680px) + 24px); transform: translateX(-50%);
+  background: var(--accent); color: #111; padding: 6px 12px; border-radius: 8px; font-size: 0.9em;
+}
+#edit-hint[hidden] { display: none; }
 #minimap.big { width: min(70vw, 900px); height: min(70vh, 680px); }
 
 .poi-label {

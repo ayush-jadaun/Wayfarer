@@ -40,6 +40,7 @@ async function boot() {
   $('scene-name').textContent = data.name;
   grid = parseGrid(data);
   margin = { inflated: inflate(grid, 0.3) };
+  applyStoredEdits();
   const floorY = data.floorY ?? 0;
 
   scene.add(new THREE.HemisphereLight(0xdfefff, 0x1b2a3c, 1.4));
@@ -301,6 +302,7 @@ function wireUi() {
     else if (e.code === 'KeyF') player.toggleFly();
     else if (e.code === 'KeyG') setBlueprint(!blueprint.visible);
     else if (e.code === 'KeyM') $('minimap').classList.toggle('big');
+    else if (e.code === 'KeyB') toggleEdit();
     else if (e.code === 'KeyN') stopRoute();
   });
 
@@ -342,17 +344,84 @@ function wireUi() {
     hide('tag-form'); openCard(p);
   });
   $('btn-export').addEventListener('click', () => {
+    // full scene.json with the edited map and current POIs: drop it into web/public/scenes/<name>/ to publish
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(pois, null, 2)], { type: 'application/json' }));
-    a.download = `${sceneName}-pois.json`; a.click(); URL.revokeObjectURL(a.href);
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ ...data, pois }, null, 1)], { type: 'application/json' }));
+    a.download = 'scene.json'; a.click(); URL.revokeObjectURL(a.href);
   });
 
   $('nav-stop').addEventListener('click', stopRoute);
   $('minimap').addEventListener('click', (e) => {
-    if (player.locked) return;
+    if (player.locked || editing) return;
     const [x, z] = minimap.toWorld(e.offsetX, e.offsetY);
     startRoute({ name: 'Dropped pin', x, z });
   });
+
+  // map editing: left-drag paints walls, right-drag erases (mirrors, glass doors, gaps the scan missed)
+  $('btn-edit').addEventListener('click', toggleEdit);
+  const mm = $('minimap');
+  mm.addEventListener('contextmenu', (e) => { if (editing) e.preventDefault(); });
+  mm.addEventListener('pointerdown', (e) => {
+    if (!editing) return;
+    mm.setPointerCapture(e.pointerId);
+    paintAt(e);
+  });
+  mm.addEventListener('pointermove', (e) => { if (editing && e.buttons) paintAt(e); });
+  mm.addEventListener('pointerup', () => { if (editing) finishStroke(); });
+}
+
+// ---------- map editing ----------
+let editing = false, stroke = false;
+const gridKey = `wayfarer:grid:${sceneName}`;
+function toggleEdit() {
+  editing = !editing;
+  player.unlock();
+  $('minimap').classList.toggle('big', editing);
+  $('minimap').classList.toggle('editing', editing);
+  $('edit-hint').hidden = !editing;
+  $('btn-edit').classList.toggle('primary', editing);
+}
+function paintAt(e) {
+  const [x, z] = minimap.toWorld(e.offsetX, e.offsetY);
+  const [cx, cz] = toCell(grid, x, z), ch = e.buttons & 2 || e.shiftKey ? '.' : '#';
+  for (let dz = -1; dz <= 1; dz++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const px = cx + dx, pz = cz + dz;
+      if (px < 0 || pz < 0 || px >= grid.w || pz >= grid.h || data.rows[pz][px] === ch) continue;
+      const row = [...data.rows[pz]]; row[px] = ch; data.rows[pz] = row.join('');
+      grid.blocked[pz * grid.w + px] = ch === '.' ? 0 : 1;
+      minimap.setCell(px, pz, ch);
+      gridEdits[pz * grid.w + px] = ch;
+    }
+  stroke = true;
+}
+function finishStroke() {
+  if (!stroke) return;
+  stroke = false;
+  margin.inflated = inflate(grid, 0.3);
+  const vis = blueprint.visible;
+  scene.remove(blueprint);
+  blueprint = buildBlueprint(data, grid, data.floorY ?? 0);
+  blueprint.visible = vis;
+  scene.add(blueprint);
+  try { localStorage.setItem(gridKey, JSON.stringify({ w: grid.w, h: grid.h, origin: data.origin, cells: gridEdits })); } catch { /* storage blocked */ }
+  if (route) reroute();
+}
+let gridEdits = {};
+// re-apply this viewer's map edits if the grid they were made on is still the same
+function applyStoredEdits() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(gridKey) || 'null'); } catch { /* storage blocked */ }
+  if (!s || s.w !== grid.w || s.h !== grid.h || s.origin?.join() !== data.origin.join()) return;
+  gridEdits = s.cells;
+  const rows = data.rows.map((r) => [...r]);
+  for (const [i, ch] of Object.entries(gridEdits)) {
+    const x = i % grid.w, z = Math.floor(i / grid.w);
+    rows[z][x] = ch;
+    grid.blocked[i] = ch === '.' ? 0 : 1;
+  }
+  data.rows = rows.map((r) => r.join(''));
+  margin.inflated = inflate(grid, 0.3);
 }
 
 // ---------- frame loop ----------
@@ -385,4 +454,4 @@ function frame() {
 }
 
 // exposed for debugging / demo recording from the console
-Object.assign(window, { wayfarer: { get player() { return player; }, get route() { return route; }, get splat() { return splat; }, routeLength } });
+Object.assign(window, { wayfarer: { get player() { return player; }, get route() { return route; }, get splat() { return splat; }, get mm() { return minimap; }, routeLength } });

@@ -20,7 +20,8 @@
     <div class="actions">
       <a class="studio-link" href="./upload.html" title="Upload a new capture">+ New twin</a>
       <button id="btn-tag" title="Tag a POI at the crosshair (T)">+ Tag POI</button>
-      <button id="btn-export" title="Download POIs as JSON">Export POIs</button>
+      <button id="btn-edit" title="Paint walls on the map (B)">Edit map</button>
+      <button id="btn-export" title="Download scene.json with your map edits and POIs">Download scene</button>
     </div>
   </header>
 
@@ -35,6 +36,7 @@
 
   <div id="look-label" hidden></div>
 
+  <div id="edit-hint" hidden>Editing map: <b>left-drag</b> paints walls · <b>right-drag</b> erases · <b>B</b> to finish</div>
   <canvas id="minimap" title="Click to navigate there (M to enlarge)"></canvas>
 
   <div id="poi-card" hidden>
@@ -71,6 +73,7 @@
         <tr><td>/</td><td>search</td><td>T</td><td>tag POI</td></tr>
         <tr><td>M</td><td>big map</td><td>G</td><td>blueprint</td></tr>
         <tr><td>Esc</td><td>free mouse</td><td>N</td><td>stop route</td></tr>
+        <tr><td>B</td><td>edit map</td><td></td><td></td></tr>
       </table>
     </div>
   </div>

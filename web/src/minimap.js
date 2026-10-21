@@ -1,13 +1,21 @@
 // Top-down map: grid baked once into an offscreen canvas, player/POIs/route drawn per frame.
+const PAL = { '.': [24, 44, 70, 230], o: [76, 195, 230, 255], '#': [235, 240, 245, 255], ' ': [0, 0, 0, 0] };
+
 export class Minimap {
   constructor(canvas, grid, rows) {
     this.canvas = canvas; this.g = grid;
     this.base = document.createElement('canvas');
     this.base.width = grid.w; this.base.height = grid.h;
     const ctx = this.base.getContext('2d'), img = ctx.createImageData(grid.w, grid.h);
-    const pal = { '.': [24, 44, 70, 230], o: [76, 195, 230, 255], '#': [235, 240, 245, 255], ' ': [0, 0, 0, 0] };
-    rows.forEach((row, z) => [...row].forEach((c, x) => img.data.set(pal[c] ?? pal['#'], (z * grid.w + x) * 4)));
+    rows.forEach((row, z) => [...row].forEach((c, x) => img.data.set(PAL[c] ?? PAL['#'], (z * grid.w + x) * 4)));
     ctx.putImageData(img, 0, 0);
+  }
+
+  setCell(x, z, ch) {  // live update while painting walls
+    const ctx = this.base.getContext('2d'), [r, g, b, a] = PAL[ch] ?? PAL['#'];
+    ctx.clearRect(x, z, 1, 1);
+    ctx.fillStyle = `rgba(${r},${g},${b},${a / 255})`;
+    ctx.fillRect(x, z, 1, 1);
   }
 
   // world (x,z) -> canvas px, fitted with padding
