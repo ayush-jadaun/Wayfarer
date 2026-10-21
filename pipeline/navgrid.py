@@ -413,6 +413,32 @@ def drop_small_blobs(mask, min_cells):
     return out
 
 
+def crop_mask(v, scene, margin=0.5):
+    """Splats inside the mapped space: over a known grid cell (+margin) and between floor and ceiling."""
+    from scipy.spatial.transform import Rotation
+    tr = scene['transform']
+    R, s, t = Rotation.from_quat(tr['rotation']).as_matrix(), tr['scale'][0], np.array(tr['position'])
+    m = s * (np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64) @ R.T) + t
+    rows, cell = scene['rows'], scene['cellSize']
+    known = np.array([[c != ' ' for c in r] for r in rows])
+    known = dilate(known, max(1, round(margin / cell)))
+    H, W = known.shape
+    ix = ((m[:, 0] - scene['origin'][0]) / cell).astype(int)
+    iz = ((m[:, 2] - scene['origin'][1]) / cell).astype(int)
+    inside = (ix >= 0) & (ix < W) & (iz >= 0) & (iz < H)
+    keep = np.zeros(len(v), bool)
+    keep[inside] = known[iz[inside], ix[inside]]
+    return keep & (m[:, 1] > -0.3) & (m[:, 1] < scene['wallHeight'] + 0.3)
+
+
+def write_ply(v, path):
+    """Binary PLY with the same float properties as the input."""
+    with open(path, 'wb') as f:
+        f.write(('ply\nformat binary_little_endian 1.0\nelement vertex %d\n' % len(v)
+                 + ''.join(f'property float {n}\n' for n in v.dtype.names) + 'end_header\n').encode())
+        v.astype([(n, '<f4') for n in v.dtype.names]).tofile(f)
+
+
 def to_sog(ply, out):
     """Compress with PlayCanvas splat-transform (installed in web/): ~10 B/splat with full SH, floaters filtered."""
     cli = Path(__file__).resolve().parent.parent / 'web' / 'node_modules' / '@playcanvas' / 'splat-transform' / 'bin' / 'cli.mjs'
@@ -463,6 +489,7 @@ def main():
     ap.add_argument('--cell', type=float, default=0.1, help='grid cell size in metres')
     ap.add_argument('--marker-size', type=float, default=0.15, help='printed ArUco marker side in metres')
     ap.add_argument('--no-carve', action='store_true', help='skip rendered-depth free-space carving')
+    ap.add_argument('--no-crop', action='store_true', help='keep splats outside the mapped space')
     a = ap.parse_args()
 
     out = Path(a.out)
@@ -489,6 +516,13 @@ def main():
 
     for stale in ('scene.sog', 'scene.splat', 'scene.ply'):
         (out / stale).unlink(missing_ok=True)
+    if not a.no_crop:  # drop junk outside the house (seen through windows/mirrors): cleaner view, smaller file
+        keep = crop_mask(v, scene)
+        if keep.mean() < 0.995:
+            print(f'  cropped {np.count_nonzero(~keep):,} splats outside the mapped space ({1 - keep.mean():.0%})')
+            v = v[keep]
+            a.splat = str(out / '_cropped.ply')
+            write_ply(v, a.splat)
     if 'f_dc_0' in v.dtype.names and to_sog(a.splat, out / 'scene.sog'):
         url = 'scene.sog'
         print(f'  wrote scene.sog ({(out / url).stat().st_size / 1e6:.1f} MB, full SH)')
@@ -500,6 +534,7 @@ def main():
         shutil.copy(a.splat, out / 'scene.ply')
         url = 'scene.ply'
 
+    (out / '_cropped.ply').unlink(missing_ok=True)
     old = out / 'scene.json'
     pois = json.loads(old.read_text()).get('pois', []) if old.exists() else []  # re-runs keep tagged POIs
     tr = scene.pop('transform')
