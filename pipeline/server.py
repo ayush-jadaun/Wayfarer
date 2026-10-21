@@ -176,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'error': 'ceiling must be a number in metres'}, 400)
         if ceiling is not None and not 1.8 <= ceiling <= 12:
             return self.send_json({'error': 'ceiling should be between 1.8 and 12 m'}, 400)
-        quality = q.get('quality') if q.get('quality') in ('fast', 'default', 'high') else None
+        quality = q.get('quality') if q.get('quality') in ('fast', 'default', 'high', 'max') else None
 
         jid = uuid.uuid4().hex[:8]
         files = [uploads[i] for i in ids]

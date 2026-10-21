@@ -197,8 +197,9 @@ def main():
                     help=f'COLMAP matching: auto = exhaustive up to {EXHAUSTIVE_MAX} frames, else sequential + loop closure')
     ap.add_argument('--marker-size', type=float, default=0.15,
                     help='printed ArUco marker side in metres (docs/marker.svg); gives metric scale when filmed')
-    ap.add_argument('--quality', choices=['fast', 'default', 'high'], default='default',
-                    help='fast = 7k-iteration preview, default = 30k, high = 45k (all fit in 8 GB VRAM)')
+    ap.add_argument('--quality', choices=['fast', 'default', 'high', 'max'], default='default',
+                    help='fast = 7k preview @1280px, default = 30k @1280px, high = 40k @1600px, '
+                         'max = 50k @1600px with up to 600 frames (best twin; film in 4K)')
     ap.add_argument('--trainer', choices=['splatfacto', 'mcmc'], default='splatfacto',
                     help='splatfacto: best quality in our benchmark; mcmc: hard 1M-Gaussian cap, never runs out of VRAM')
     ap.add_argument('--no-autopoi', action='store_true', help='skip automatic object labelling')
@@ -230,7 +231,9 @@ def main():
     print('[1/5] frames')
     if todo('frames', frames.exists() and any(frames.iterdir())):
         shutil.rmtree(frames, ignore_errors=True)
-        side = a.max_side or (1600 if a.quality == 'high' else 1280)  # 1280 px trains ~1.5x faster than 1600
+        side = a.max_side or (1600 if a.quality in ('high', 'max') else 1280)  # 1280 px trains ~1.5x faster
+        if a.quality == 'max' and a.max_frames == 500:
+            a.max_frames = 600  # more viewpoints: COLMAP cost is linear with sequential matching
         record(**step_frames(a.inputs, frames, a.fps, a.max_frames, side), maxSide=side)
 
     print('[2/5] sfm (COLMAP)')
@@ -251,7 +254,7 @@ def main():
     done_flag = outputs / 'train.ok'  # config.yml appears when training *starts*, so it can't mean "done"
     trained = (mcmc_dir / 'splat.ply').exists() if a.trainer == 'mcmc' else done_flag.exists()
     if todo('train', trained):
-        iters = {'fast': 7000, 'default': 30000, 'high': 45000}[a.quality]
+        iters = {'fast': 7000, 'default': 30000, 'high': 40000, 'max': 50000}[a.quality]
         # an interrupted splatfacto run resumes from its last checkpoint instead of starting over
         ckpts = sorted(outputs.glob('**/nerfstudio_models/step-*.ckpt'), key=lambda p: p.stat().st_mtime)
         resume = ckpts[-1].parent if ckpts and 'train' not in redo and a.trainer == 'splatfacto' else None
