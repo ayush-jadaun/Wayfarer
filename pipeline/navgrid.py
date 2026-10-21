@@ -169,7 +169,7 @@ def components_touching(free, seeds):
 
 # ---------------------------------------------------------------- main build
 def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=None, camera_height=1.4, default_ceiling=2.75,
-          cell=0.1, obstacle_band=(0.12, 1.9), tall_from=1.2, seed=0, log=print):
+          cell=0.1, obstacle_band=(0.12, 1.9), tall_from=1.2, carver=None, seed=0, log=print):
     rng = np.random.default_rng(seed)
     P = np.stack([v['x'], v['y'], v['z']], 1).astype(np.float64)
     alpha = sigmoid(v['opacity']) if 'opacity' in v.dtype.names else np.ones(len(P))
@@ -266,7 +266,18 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
     floor_n = count(np.abs(A[:, 1]) < band)
     nz = obs_n[obs_n > 0]
     thr = max(2.0, 0.025 * np.quantile(nz, 0.9)) if len(nz) else 2.0  # walls are dense, table tops are not
-    obstacle = drop_small_blobs(obs_n >= thr, min_cells=max(2, round(0.03 / cell ** 2)))  # < 0.03 m^2 = floater
+    obstacle = obs_n >= thr
+    if carver is not None:  # rendered-depth evidence: what cameras saw through is empty, where rays end is solid
+        passed, hits = carver(lambda p: s * ((p - c_floor) @ R_total.T), (x0, z0, cell, W, H), (lo, hi))
+        hz = hits[hits > 0]
+        solid = hits >= (max(3.0, 0.05 * np.quantile(hz, 0.9)) if len(hz) else np.inf)
+        # only weak (floater-like) evidence can be carved away; dense walls survive semi-transparent renders
+        seen_through = (passed >= 6) & (passed >= 4 * hits) & (obs_n < 3 * thr)
+        before = obstacle.copy()
+        obstacle = (obstacle | solid) & ~seen_through
+        log(f'  depth carving: {np.count_nonzero(before & ~obstacle)} floater cells cleared, '
+            f'{np.count_nonzero(obstacle & ~before)} surface cells added')
+    obstacle = drop_small_blobs(obstacle, min_cells=max(2, round(0.03 / cell ** 2)))  # < 0.03 m^2 = floater
     tall = obstacle & (tall_n >= thr * 0.5)
     fz = floor_n[floor_n > 0]
     floor = floor_n >= (0.2 * np.median(fz) if len(fz) else 1)  # real floor is dense; lone floaters are not
@@ -400,20 +411,30 @@ def main():
     ap.add_argument('--camera-height', type=float, default=1.4, help='SOP phone height in metres')
     ap.add_argument('--cell', type=float, default=0.1, help='grid cell size in metres')
     ap.add_argument('--marker-size', type=float, default=0.15, help='printed ArUco marker side in metres')
+    ap.add_argument('--no-carve', action='store_true', help='skip rendered-depth free-space carving')
     a = ap.parse_args()
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     print(f'reading {a.splat}')
     v = read_ply(a.splat)
-    cams, marker = None, None
+    cams, marker, carver = None, None, None
     if a.transforms and a.dataparser:
         cams = load_cameras(a.transforms, a.dataparser)
         if not a.scale:
             from marker_scale import marker_scale
             marker = marker_scale(a.transforms, a.dataparser, a.marker_size)
+        if 'rot_0' in v.dtype.names and not a.no_carve:
+            try:
+                import torch
+                import depthcarve
+                if torch.cuda.is_available():
+                    views = depthcarve.load_views(a.transforms, a.dataparser)
+                    carver = lambda to_metric, grid, band: depthcarve.carve(v, *views, to_metric, grid, band)
+            except ImportError:
+                print('  (torch/gsplat not available: skipping depth carving)')
     scene = build(v, cams, up=[float(x) for x in a.up.split(',')], scale=a.scale, marker=marker, ceiling=a.ceiling,
-                  camera_height=a.camera_height, cell=a.cell)
+                  camera_height=a.camera_height, cell=a.cell, carver=carver)
 
     for stale in ('scene.sog', 'scene.splat', 'scene.ply'):
         (out / stale).unlink(missing_ok=True)
