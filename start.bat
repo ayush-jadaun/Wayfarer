@@ -7,7 +7,8 @@ if not exist ".venv-ns\Scripts\python.exe" (
   pause
   exit /b 1
 )
-where colmap >nul 2>nul || if exist "E:\tools\colmap\COLMAP-3.9.1-windows-cuda\COLMAP.bat" set "PATH=%PATH%;E:\tools\colmap\COLMAP-3.9.1-windows-cuda"
+rem COLMAP 4.2+ first: older installs on PATH lack the global mapper
+if exist "E:\tools\colmap4\COLMAP.bat" set "PATH=E:\tools\colmap4;%PATH%"
 where colmap >nul 2>nul || echo WARNING: COLMAP not on PATH - see docs\SETUP.md
 
 if not exist "web\node_modules" (

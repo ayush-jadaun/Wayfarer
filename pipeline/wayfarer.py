@@ -5,7 +5,7 @@
 Steps (each is skipped when its output already exists; --force STEP re-runs from STEP):
   frames   ffmpeg -> keep the sharpest frame per window (motion-blur rejection)
   sfm      COLMAP run directly: GPU SIFT, exhaustive matching (or sequential + loop closure for long
-           captures), incremental mapping; the largest model is kept and registration is gated
+           captures), global (GLOMAP) mapping; the largest model is kept and registration is gated
   train    nerfstudio splatfacto (3D Gaussian Splatting) on the GPU, memory-safe for 8 GB
   export   ns-export gaussian-splat -> splat.ply
   navgrid  metric scale (ArUco marker / ceiling / camera height), floor, walls -> occupancy grid,
@@ -19,13 +19,11 @@ import struct
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-VOCAB_URL = 'https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_flickr100K_words32K.bin'  # FLANN format, COLMAP <= 3.11
 # exhaustive matching is O(n^2): 292 frames took 22 min. Beyond this, video frames are matched with their
 # neighbours (quadratic overlap) plus vocabulary-tree loop closure: O(n), same accuracy on walk-through video.
 EXHAUSTIVE_MAX = 150
@@ -116,18 +114,7 @@ def registered_images(model):
         return struct.unpack('<Q', f.read(8))[0]
 
 
-def vocab_tree(work_root):
-    path = work_root / VOCAB_URL.rsplit('/', 1)[-1]
-    if not path.exists():
-        print(f'  downloading COLMAP vocabulary tree for loop closure ({VOCAB_URL})')
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix('.part')
-        urllib.request.urlretrieve(VOCAB_URL, tmp)
-        tmp.replace(path)
-    return path
-
-
-def step_sfm(frames, ns, matching, work_root, mask_dir=None):
+def step_sfm(frames, ns, matching, mapper, mask_dir=None):
     """COLMAP run directly: nerfstudio's wrapper disables loop detection and only ever reads sparse/0."""
     cm = ns / 'colmap'
     db = cm / 'database.db'
@@ -138,23 +125,27 @@ def step_sfm(frames, ns, matching, work_root, mask_dir=None):
         cm.mkdir(parents=True)
         run(['colmap', 'feature_extractor', '--database_path', db, '--image_path', frames,
              '--ImageReader.single_camera', '1', '--ImageReader.camera_model', 'OPENCV',
-             '--SiftExtraction.use_gpu', '1', '--SiftExtraction.max_num_features', '8192',
+             '--FeatureExtraction.use_gpu', '1', '--SiftExtraction.max_num_features', '8192',
              *(['--ImageReader.mask_path', mask_dir] if mask_dir else [])])  # no features on moving people
         if matching == 'auto':
             matching = 'exhaustive' if n_frames <= EXHAUSTIVE_MAX else 'sequential'
         print(f'  matching: {matching} ({n_frames} frames)', flush=True)
         if matching == 'exhaustive':
-            run(['colmap', 'exhaustive_matcher', '--database_path', db, '--SiftMatching.use_gpu', '1'])
+            run(['colmap', 'exhaustive_matcher', '--database_path', db, '--FeatureMatching.use_gpu', '1'])
         else:
-            run(['colmap', 'sequential_matcher', '--database_path', db, '--SiftMatching.use_gpu', '1',
+            run(['colmap', 'sequential_matcher', '--database_path', db, '--FeatureMatching.use_gpu', '1',
                  '--SequentialMatching.overlap', '20', '--SequentialMatching.quadratic_overlap', '1',
-                 '--SequentialMatching.loop_detection', '1', '--SequentialMatching.vocab_tree_path', vocab_tree(work_root)])
+                 '--SequentialMatching.loop_detection', '1'])  # COLMAP 4 fetches and caches its own vocab tree
         matched.touch()
     else:
         print('  reusing features and matches from the interrupted run')
     shutil.rmtree(cm / 'sparse', ignore_errors=True)
     (cm / 'sparse').mkdir()
-    run(['colmap', 'mapper', '--database_path', db, '--image_path', frames, '--output_path', cm / 'sparse'])
+    # global (GLOMAP) solves all cameras at once. myhome: 284/292 frames, one model, 0.67 px, 6.5 min
+    # vs incremental 282 frames split in two, 0.71 px, 17 min
+    if mapper == 'global':  # video frames have no EXIF focal; global mapping needs a good focal prior
+        run(['colmap', 'view_graph_calibrator', '--database_path', db])
+    run(['colmap', 'global_mapper' if mapper == 'global' else 'mapper', '--database_path', db, '--image_path', frames, '--output_path', cm / 'sparse'])
 
     models = sorted((registered_images(m), m) for m in (cm / 'sparse').iterdir() if (m / 'images.bin').exists())
     if not models:
@@ -200,6 +191,8 @@ def main():
     ap.add_argument('--max-side', type=int, help='longest image side in px (default: 1280, or 1600 for --quality high)')
     ap.add_argument('--matching', choices=['auto', 'exhaustive', 'sequential'], default='auto',
                     help=f'COLMAP matching: auto = exhaustive up to {EXHAUSTIVE_MAX} frames, else sequential + loop closure')
+    ap.add_argument('--mapper', choices=['global', 'incremental'], default='global',
+                    help='COLMAP 4 mapper: global (GLOMAP) is faster and less likely to split; incremental is the classic fallback')
     ap.add_argument('--marker-size', type=float, default=0.15,
                     help='printed ArUco marker side in metres (docs/marker.svg); gives metric scale when filmed')
     ap.add_argument('--quality', choices=['fast', 'default', 'high', 'max'], default='default',
@@ -252,7 +245,7 @@ def main():
             record(framesWithPeople=n)
             mask_dir = work / 'masks' if n else None
         t = time.time()
-        record(**step_sfm(frames, ns, a.matching, a.work, mask_dir), sfmSeconds=round(time.time() - t))
+        record(**step_sfm(frames, ns, a.matching, a.mapper, mask_dir), sfmSeconds=round(time.time() - t))
 
     print('[3/5] train (Gaussian splatting)')
     mcmc_dir = outputs / 'mcmc'

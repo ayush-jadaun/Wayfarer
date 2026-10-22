@@ -9,7 +9,7 @@ Tested on Windows 11 with an RTX 4070 Laptop GPU (8 GB). Linux works the same wa
 | NVIDIA driver | CUDA 11.8+ capable | `nvidia-smi` should work |
 | Python | 3.10 (via [uv](https://docs.astral.sh/uv/)) | nerfstudio 1.1.x does not support 3.12 yet |
 | FFmpeg | any recent | must be on `PATH` |
-| COLMAP | 3.9+ | Windows: download `colmap-x64-windows-cuda.zip` from the [releases page](https://github.com/colmap/colmap/releases), unzip it, and add the folder (the one containing `COLMAP.bat`) to `PATH` |
+| COLMAP | 4.2+ (has the global mapper) | Windows: download `colmap-x64-windows-cuda.zip` from the [releases page](https://github.com/colmap/colmap/releases), unzip it, and add the folder (the one containing `COLMAP.bat`) to `PATH` |
 | Node.js | 20+ | for the web viewer |
 
 ## 2. Training environment
