@@ -12,6 +12,7 @@ Steps (each is skipped when its output already exists; --force STEP re-runs from
            SOG-compressed splat and scene.json in web/public/scenes/<name>
 """
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -141,8 +142,10 @@ def step_sfm(frames, ns, matching, mapper, mask_dir=None):
     cm = ns / 'colmap'
     db = cm / 'database.db'
     matched = cm / 'matched.ok'  # features + matches are the slow part: reuse them if a run was interrupted
-    n_frames = sum(1 for _ in frames.iterdir())
-    if not matched.exists():
+    names = sorted(p.name for p in frames.iterdir())
+    n_frames = len(names)
+    key = hashlib.sha1('\n'.join(names).encode()).hexdigest()  # matches only belong to the exact same frames
+    if not matched.exists() or matched.read_text() != key:
         shutil.rmtree(ns, ignore_errors=True)
         cm.mkdir(parents=True)
         run(['colmap', 'feature_extractor', '--database_path', db, '--image_path', frames,
@@ -158,7 +161,7 @@ def step_sfm(frames, ns, matching, mapper, mask_dir=None):
             run(['colmap', 'sequential_matcher', '--database_path', db, '--FeatureMatching.use_gpu', '1',
                  '--SequentialMatching.overlap', '20', '--SequentialMatching.quadratic_overlap', '1',
                  '--SequentialMatching.loop_detection', '1'])  # COLMAP 4 fetches and caches its own vocab tree
-        matched.touch()
+        matched.write_text(key)
     else:
         print('  reusing features and matches from the interrupted run')
     shutil.rmtree(cm / 'sparse', ignore_errors=True)
