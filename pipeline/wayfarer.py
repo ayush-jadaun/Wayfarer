@@ -114,6 +114,28 @@ def registered_images(model):
         return struct.unpack('<Q', f.read(8))[0]
 
 
+def stray_cameras(centers, k=10):
+    """Indices of cameras implausibly far from the rest: > k x the median distance to the median centre."""
+    d = np.linalg.norm(centers - np.median(centers, 0), axis=1)
+    return np.flatnonzero(d > k * np.median(d))
+
+
+def drop_stray_cameras(model):
+    """The global mapper places weakly connected frames anywhere (room4k: 31 cameras 200 to 2e7 units out in a
+    16-unit house). nerfstudio scales poses to fit them all, squashing the real ones into a dot, and training
+    fills the room with fog. Delete them from the model; returns how many."""
+    from nerfstudio.data.utils.colmap_parsing_utils import qvec2rotmat, read_images_binary
+    ims = list(read_images_binary(model / 'images.bin').values())
+    bad = stray_cameras(np.array([-qvec2rotmat(i.qvec).T @ i.tvec for i in ims]))
+    if len(bad):
+        names = model / 'stray.txt'
+        names.write_text('\n'.join(ims[i].name for i in bad))
+        run(['colmap', 'image_deleter', '--input_path', model, '--output_path', model, '--image_names_path', names])
+        run(['colmap', 'point_filtering', '--input_path', model, '--output_path', model])
+        print(f'  dropped {len(bad)} stray camera(s) the mapper could not place reliably')
+    return len(bad)
+
+
 def step_sfm(frames, ns, matching, mapper, mask_dir=None):
     """COLMAP run directly: nerfstudio's wrapper disables loop detection and only ever reads sparse/0."""
     cm = ns / 'colmap'
@@ -156,6 +178,8 @@ def step_sfm(frames, ns, matching, mapper, mask_dir=None):
         best.rename(tmp)
         (cm / 'sparse' / '0').rename(cm / 'sparse' / str(len(models)))
         tmp.rename(cm / 'sparse' / '0')
+    stray = drop_stray_cameras(cm / 'sparse' / '0')
+    best_n -= stray
     ratio = best_n / n_frames
     print(f'  registered {best_n}/{n_frames} frames ({ratio:.0%}) in the largest of {len(models)} model(s)')
     if len(models) > 1:
