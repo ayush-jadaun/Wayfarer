@@ -83,6 +83,15 @@ wrong = build(v, (raw(loop), np.tile(np.array([1.0, 0, 0]) @ M.T, (80, 1))), up=
 s2 = wrong['transform']['scale'][0]
 assert abs(s2 - TRUE_SCALE) / TRUE_SCALE < 0.03, f'wrong up hint: scale {s2}'
 
+# regression (myhome-v2): a big bed top is a larger plane than a half-hidden floor -> floor must still be the lowest layer
+bed = rng.uniform([3.4, 0.55, 0.3], [5.4, 0.55, 2.3], (30000, 3))
+Rb = raw(np.concatenate([P[30000:], bed]))  # phone footage barely shows the floor: keep a quarter of it
+vb = np.zeros(len(Rb), dtype=v.dtype)
+vb['x'], vb['y'], vb['z'] = Rb.T
+vb['opacity'], vb['scale_0'], vb['scale_1'], vb['scale_2'] = 4.0, *[math.log(0.003)] * 3
+s3 = build(vb, cams, ceiling=H, log=lambda *_: None)['transform']['scale'][0]
+assert abs(s3 - TRUE_SCALE) / TRUE_SCALE < 0.03, f'bed taken for floor: scale {s3}'
+
 print('\n'.join(rows[::2]))
 print(f'ok: scale {s:.3f}, walkable {walk_m2:.1f} m^2, table {table_m2:.2f} m^2, wall {scene["wallHeight"]} m')
 

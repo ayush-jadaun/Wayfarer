@@ -234,6 +234,15 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
         if np.count_nonzero(low & below) > 500:
             low &= below
     n, c_floor, _ = ransac_plane(sub(low), up, rng, max_tilt=max_tilt, tol=tol)
+    # the floor is the LOWEST dense horizontal layer, not the largest plane: a bed or table top beats a floor
+    # that phone footage barely shows (myhome-v2 took the bed and walked 1 m in the air)
+    h_low = (P[low] - c_floor) @ n
+    hist, edges = np.histogram(h_low, bins=np.arange(h_low.min(), h_low.max() + 4 * tol, 2 * tol))
+    floor_h = edges[np.flatnonzero(hist >= max(0.2 * hist.max(), 200))[0]] + tol
+    if floor_h < -5 * tol:
+        near = low & (np.abs((P - c_floor) @ n - floor_h) < 3 * tol)
+        n, c_floor, _ = ransac_plane(sub(near), n, rng, max_tilt=max_tilt, tol=tol)
+        log(f'  floor is {-floor_h:.3f} units below the largest plane (a bed/table top): using the lower one')
     R = basis_from_up(n)
     hh = (P - c_floor) @ n  # raw height above floor
 
