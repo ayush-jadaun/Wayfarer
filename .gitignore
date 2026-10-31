@@ -8,3 +8,4 @@ work/
 *.pdf
 .DS_Store
 research_notes/
+*.tmp
