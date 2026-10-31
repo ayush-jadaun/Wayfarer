@@ -5,7 +5,7 @@ import { Player, isTyping } from './player.js';
 import { Minimap } from './minimap.js';
 
 const $ = (id) => document.getElementById(id);
-const sceneName = new URLSearchParams(location.search).get('scene') || 'demo';
+const sceneName = new URLSearchParams(location.search).get('scene') || 'myhome-v2';
 const sceneDir = `${import.meta.env.BASE_URL}scenes/${sceneName}/`;
 const WALK_SPEED = 1.3; // m/s, for ETA
 

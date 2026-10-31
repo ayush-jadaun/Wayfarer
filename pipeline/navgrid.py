@@ -184,6 +184,26 @@ def components_touching(free, seeds):
 
 
 # ---------------------------------------------------------------- main build
+def pick_floor(P, n, c, cam_pos, target, bin_size):
+    """Height along n (relative to c) of the dense layer below the camera whose camera-height / room-height ratio
+    is closest to target. Scale-free, so it works before metric scale is known. None without a visible ceiling."""
+    h = (P - c) @ n
+    cam = float(np.median((cam_pos - c) @ n))
+    lo, hi = np.percentile(h, [0.5, 99.5])
+    above, below = h[(h > cam) & (h < hi)], h[(h < cam) & (h > lo)]
+    if len(above) < 200 or len(below) < 200:
+        return None
+    ha, ea = np.histogram(above, bins=np.arange(cam, hi + bin_size, bin_size))
+    ceil = ea[np.flatnonzero(ha >= 0.2 * ha.max())[-1] + 1]  # top of the dense block: the ceiling
+    hb, eb = np.histogram(below, bins=np.arange(lo, cam + bin_size, bin_size))
+    hs = np.convolve(hb, np.ones(3) / 3, 'same')
+    peaks = [eb[i] + bin_size / 2 for i in range(1, len(hs) - 1)
+             if hs[i] >= hs[i - 1] and hs[i] >= hs[i + 1] and hs[i] >= 0.2 * hs.max()]
+    if not peaks:
+        return None
+    return float(min(peaks, key=lambda f: abs((cam - f) / (ceil - f) - target)))
+
+
 def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=None, camera_height=1.4, default_ceiling=2.75,
           cell=0.1, obstacle_band=(0.12, 1.9), tall_from=1.2, carver=None, seed=0, log=print):
     rng = np.random.default_rng(seed)
@@ -234,15 +254,16 @@ def build(v, cameras=None, *, up=(0, 0, 1), scale=None, marker=None, ceiling=Non
         if np.count_nonzero(low & below) > 500:
             low &= below
     n, c_floor, _ = ransac_plane(sub(low), up, rng, max_tilt=max_tilt, tol=tol)
-    # the floor is the LOWEST dense horizontal layer, not the largest plane: a bed or table top beats a floor
-    # that phone footage barely shows (myhome-v2 took the bed and walked 1 m in the air)
-    h_low = (P[low] - c_floor) @ n
-    hist, edges = np.histogram(h_low, bins=np.arange(h_low.min(), h_low.max() + 4 * tol, 2 * tol))
-    floor_h = edges[np.flatnonzero(hist >= max(0.2 * hist.max(), 200))[0]] + tol
-    if floor_h < -5 * tol:
-        near = low & (np.abs((P - c_floor) @ n - floor_h) < 3 * tol)
-        n, c_floor, _ = ransac_plane(sub(near), n, rng, max_tilt=max_tilt, tol=tol)
-        log(f'  floor is {-floor_h:.3f} units below the largest plane (a bed/table top): using the lower one')
+    # the largest horizontal plane is not always the floor: a bed top can out-vote a floor that phone footage
+    # barely shows (myhome-v2 walked 1 m in the air), and floaters or reflections in glossy tiles form dense
+    # layers below it. Take the layer that puts the camera at a plausible fraction of the room height.
+    if cameras is not None:
+        alt = pick_floor(P, n, c_floor, cameras[0], camera_height / (ceiling or default_ceiling), 2 * tol)
+        if alt is not None and abs(alt) > 5 * tol:
+            near = np.abs((P - c_floor) @ n - alt) < 3 * tol
+            if np.count_nonzero(near) > 500:
+                n, c_floor, _ = ransac_plane(sub(near), n, rng, max_tilt=max_tilt, tol=tol)
+                log(f'  floor moved {alt:+.3f} units from the largest plane (bed/table top or reflections)')
     R = basis_from_up(n)
     hh = (P - c_floor) @ n  # raw height above floor
 

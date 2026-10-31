@@ -4,6 +4,8 @@
 
 Built for **Namma Space, Techfest 2026-27, IIT Bombay**.
 
+**Live viewer:** https://wayfarer-ten-kappa.vercel.app (opens `myhome-v2`; also try `?scene=vid1028` or `?scene=demo`)
+
 ```
  phone video ──► sharp-frame picker ──► COLMAP SfM ──► Gaussian splatting ──► navgrid ──► web twin
   (SOP)            ffmpeg + Laplacian     camera poses    nerfstudio / gsplat     floor, metric    three.js
@@ -32,10 +34,14 @@ Built for **Namma Space, Techfest 2026-27, IIT Bombay**.
 ```bash
 cd web
 npm install
-npm run dev          # http://localhost:5173  -> procedural demo home
+npm run dev          # http://localhost:5173  -> myhome-v2, a twin of a real home
 ```
 
-Open `?scene=<name>` to load a reconstructed scene from `web/public/scenes/<name>/`.
+Open `?scene=<name>` to load another scene from `web/public/scenes/<name>/`: `vid1028` (a single room) or `demo` (a procedural home).
+
+## Sample data
+
+[`test/`](test/README.md) has 111 frames of a real room and the one command that rebuilds a walkable twin from them.
 
 | Key | Action | Key | Action |
 |---|---|---|---|
@@ -123,3 +129,7 @@ Open-source software we build on:
 - [COLMAP](https://colmap.github.io) (BSD)
 - [FFmpeg](https://ffmpeg.org) (LGPL)
 - [Vite](https://vitejs.dev) (MIT)
+- [GLOMAP](https://github.com/colmap/glomap), the global mapper inside COLMAP 4 (BSD)
+- [PyTorch](https://pytorch.org) and [torchvision](https://github.com/pytorch/vision) (BSD-3-Clause), including the COCO Faster R-CNN detector
+- [LaMa](https://github.com/advimman/lama) (Apache-2.0) via [simple-lama-inpainting](https://github.com/enesmsahin/simple-lama-inpainting) (Apache-2.0)
+- [NVIDIA Difix3D+](https://github.com/nv-tlabs/Difix3D) (NVIDIA license: non-commercial research and evaluation use only), with [diffusers](https://github.com/huggingface/diffusers) (Apache-2.0)

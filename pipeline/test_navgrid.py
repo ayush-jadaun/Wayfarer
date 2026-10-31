@@ -91,6 +91,14 @@ vb['x'], vb['y'], vb['z'] = Rb.T
 vb['opacity'], vb['scale_0'], vb['scale_1'], vb['scale_2'] = 4.0, *[math.log(0.003)] * 3
 s3 = build(vb, cams, ceiling=H, log=lambda *_: None)['transform']['scale'][0]
 assert abs(s3 - TRUE_SCALE) / TRUE_SCALE < 0.03, f'bed taken for floor: scale {s3}'
+# ...and a dense mirror layer under glossy tiles must not be taken for the floor either
+mirror = rng.uniform([0.5, -1.2, 0.5], [3.0, -1.2, 3.0], (30000, 3))
+Rm = raw(np.concatenate([P[30000:], bed, mirror]))
+vm = np.zeros(len(Rm), dtype=v.dtype)
+vm['x'], vm['y'], vm['z'] = Rm.T
+vm['opacity'], vm['scale_0'], vm['scale_1'], vm['scale_2'] = 4.0, *[math.log(0.003)] * 3
+s4 = build(vm, cams, ceiling=H, log=lambda *_: None)['transform']['scale'][0]
+assert abs(s4 - TRUE_SCALE) / TRUE_SCALE < 0.03, f'reflection taken for floor: scale {s4}'
 
 print('\n'.join(rows[::2]))
 print(f'ok: scale {s:.3f}, walkable {walk_m2:.1f} m^2, table {table_m2:.2f} m^2, wall {scene["wallHeight"]} m')
